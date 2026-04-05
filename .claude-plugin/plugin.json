@@ -1,0 +1,8 @@
+{
+  "name": "seal-security",
+  "version": "1.0.0",
+  "description": "Comprehensive Web3 security framework based on SEAL (Security Alliance). Includes security guidance skill, platform-specific checklists, and hooks that catch dangerous commands, secret exposure, and insecure patterns in real-time.",
+  "author": {
+    "name": "zero"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "description": "SEAL security hooks: catches dangerous shell commands, secret exposure, and insecure patterns in real-time",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/security_guard.py\""
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/secret_scanner.py\""
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
+    ]
+  }
+}
