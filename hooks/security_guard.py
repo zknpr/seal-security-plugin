@@ -18,49 +18,22 @@ import re
 import sys
 from datetime import datetime
 
+# Inject local directory to allow importing utils when run standalone
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils import debug_log as _debug_log, load_shown as _load_shown, save_shown as _save_shown
+
 # Log file for debugging hook behavior
 DEBUG_LOG = "/tmp/seal-security-guard.log"
 
-# State file tracks which warnings have been shown per session
-# so we don't nag repeatedly for the same pattern in one session
-
-
+# Wrapper functions to provide the specific prefix for security guard
 def debug_log(msg):
-    """Append timestamped debug message to log file."""
-    try:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        with open(DEBUG_LOG, "a") as f:
-            f.write(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
-
-
-def get_state_file(session_id):
-    """Return path to session-specific state file for dedup."""
-    return os.path.expanduser(f"~/.claude/.seal_guard_state_{session_id}.json")
-
+    _debug_log(msg, DEBUG_LOG)
 
 def load_shown(session_id):
-    """Load set of already-shown warning keys for this session."""
-    path = get_state_file(session_id)
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                return set(json.load(f))
-        except (json.JSONDecodeError, IOError):
-            return set()
-    return set()
-
+    return _load_shown(session_id, "seal_guard_state")
 
 def save_shown(session_id, shown):
-    """Persist the set of shown warning keys."""
-    path = get_state_file(session_id)
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(list(shown), f)
-    except IOError:
-        pass
+    _save_shown(session_id, shown, "seal_guard_state")
 
 
 # Each rule: (name, compiled regex or check function, message)
