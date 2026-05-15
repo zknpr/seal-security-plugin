@@ -232,8 +232,8 @@ def save_shown(session_id, shown):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             json.dump(list(shown), f)
-    except IOError:
-        pass
+    except IOError as e:
+        debug_log(f"Failed to save state file: {e}")
 
 
 def is_env_file(file_path):
