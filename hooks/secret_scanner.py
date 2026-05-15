@@ -285,7 +285,7 @@ def main():
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
 
-    if tool_name not in ("Write", "Edit"):
+    if tool_name not in {"Write", "Edit"}:
         sys.exit(0)
 
     file_path = tool_input.get("file_path", "")
