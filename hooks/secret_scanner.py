@@ -25,6 +25,9 @@ import re
 import sys
 from datetime import datetime
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from utils import debug_log, load_shown, save_shown
+
 DEBUG_LOG = "/tmp/seal-secret-scanner.log"
 
 # BIP39 wordlist subset — first and last words from the official list
@@ -198,44 +201,6 @@ PATTERNS = [
 ]
 
 
-def debug_log(msg):
-    """Append timestamped debug message."""
-    try:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        with open(DEBUG_LOG, "a") as f:
-            f.write(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
-
-
-def get_state_file(session_id):
-    """Session-scoped state file for dedup."""
-    return os.path.expanduser(f"~/.claude/.seal_scanner_state_{session_id}.json")
-
-
-def load_shown(session_id):
-    """Load shown warning keys."""
-    path = get_state_file(session_id)
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                return set(json.load(f))
-        except (json.JSONDecodeError, IOError):
-            return set()
-    return set()
-
-
-def save_shown(session_id, shown):
-    """Persist shown warning keys."""
-    path = get_state_file(session_id)
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(list(shown), f)
-    except IOError:
-        pass
-
-
 def is_env_file(file_path):
     """Check if file is an expected secrets file (.env, .env.local, etc.)."""
     basename = os.path.basename(file_path)
@@ -278,7 +243,7 @@ def main():
         raw = sys.stdin.read()
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        debug_log(f"JSON parse error: {e}")
+        debug_log(f"JSON parse error: {e}", DEBUG_LOG)
         sys.exit(0)
 
     session_id = data.get("session_id", "default")
@@ -294,7 +259,7 @@ def main():
     if not content:
         sys.exit(0)
 
-    debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)")
+    debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
 
     rule_name, message, should_block = scan_content(content, file_path)
 
@@ -305,14 +270,14 @@ def main():
             should_block = False
 
         warning_key = f"{rule_name}:{file_path}"
-        shown = load_shown(session_id)
+        shown = load_shown(session_id, "seal_scanner_state")
 
         if warning_key not in shown:
             shown.add(warning_key)
-            save_shown(session_id, shown)
+            save_shown(session_id, "seal_scanner_state", shown)
 
             print(message, file=sys.stderr)
-            debug_log(f"{'BLOCKED' if should_block else 'WARNED'}: {rule_name} in {file_path}")
+            debug_log(f"{'BLOCKED' if should_block else 'WARNED'}: {rule_name} in {file_path}", DEBUG_LOG)
 
             if should_block:
                 sys.exit(2)
