@@ -204,8 +204,8 @@ def debug_log(msg):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         with open(DEBUG_LOG, "a") as f:
             f.write(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
+    except OSError as e:
+        print(f"[SEAL] Warning: Failed to write to debug log {DEBUG_LOG}: {e}", file=sys.stderr)
 
 
 def get_state_file(session_id):
