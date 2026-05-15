@@ -12,6 +12,7 @@ Catches dangerous shell commands based on SEAL framework principles:
 - Insecure network operations
 """
 
+import hashlib
 import json
 import os
 import re
@@ -299,7 +300,7 @@ def main():
 
     if rule_name and message:
         # Dedup: only show each rule+command combo once per session
-        warning_key = f"{rule_name}:{hash(command)}"
+        warning_key = f"{rule_name}:{hashlib.sha256(command.encode('utf-8')).hexdigest()}"
         shown = load_shown(session_id)
 
         if warning_key not in shown:
