@@ -37,7 +37,8 @@ def debug_log(msg):
 
 def get_state_file(session_id):
     """Return path to session-specific state file for dedup."""
-    return os.path.expanduser(f"~/.claude/.seal_guard_state_{session_id}.json")
+    safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(session_id))
+    return os.path.expanduser(f"~/.claude/.seal_guard_state_{safe_session_id}.json")
 
 
 def load_shown(session_id):
