@@ -103,7 +103,7 @@ PATTERNS = [
             r"|secret[_-]?key|client[_-]?secret)\s*[=:]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]"
         ),
         "exclude": re.compile(
-            r"(process\.env|os\.environ|os\.getenv|ENV\[|System\.getenv|env\(|YOUR_|REPLACE_|xxx|placeholder|example|test|fake|dummy)",
+            r"(process\.env|os\.environ|os\.getenv|ENV\[|System\.getenv|env\()|['\"][^'\"]*(?:YOUR_|REPLACE_|xxx|placeholder|example|test|fake|dummy)[^'\"]*['\"]",
             re.IGNORECASE,
         ),
         "message": (
