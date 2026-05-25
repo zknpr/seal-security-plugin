@@ -12,11 +12,14 @@ from datetime import datetime
 
 def debug_log(msg, log_file):
     """Append a timestamped debug message to the requested hook log file."""
+    # Best-effort logger: it must NEVER break the hook. msg can carry untrusted
+    # text (command/file_path) including lone surrogates, so f.write() may raise
+    # UnicodeEncodeError (a ValueError, not OSError); swallow everything here.
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         with open(log_file, "a") as f:
             f.write(f"[{ts}] {msg}\n")
-    except OSError:
+    except Exception:
         pass
 
 

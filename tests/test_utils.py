@@ -1,6 +1,6 @@
 import os
 
-from utils import get_state_file, load_shown
+from utils import debug_log, get_state_file, load_shown
 
 
 def test_get_state_file_sanitizes_session_id_path_traversal():
@@ -29,3 +29,11 @@ def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatc
         f.write("123")
 
     assert load_shown("bad-shape", "seal_guard_state") == set()
+
+
+def test_debug_log_never_raises_on_unencodable_text(tmp_path):
+    # A lone surrogate (e.g. from JSON "\ud800") can't encode to UTF-8 and would
+    # raise UnicodeEncodeError on write; debug_log must swallow it rather than
+    # let it propagate and crash the hook before rule evaluation.
+    log_file = tmp_path / "debug.log"
+    debug_log("payload \ud800 end", str(log_file))
