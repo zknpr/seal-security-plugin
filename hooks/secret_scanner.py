@@ -23,9 +23,12 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils import debug_log, get_state_file, load_shown, save_shown
 
 DEBUG_LOG = "/tmp/seal-secret-scanner.log"
+STATE_PREFIX = "seal_scanner_state"
 
 # BIP39 wordlist subset — first and last words from the official list
 # used to detect likely mnemonic phrases (12+ dictionary words in sequence)
@@ -100,10 +103,15 @@ PATTERNS = [
         "name": "api_key_assignment",
         "pattern": re.compile(
             r"(?i)(api[_-]?key|api[_-]?secret|api[_-]?token|auth[_-]?token|access[_-]?token"
-            r"|secret[_-]?key|client[_-]?secret)\s*[=:]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]"
+            r"|secret[_-]?key|client[_-]?secret)\s*[=:]\s*['\"]"
+            r"(?P<quoted_value>[A-Za-z0-9_\-\.]{20,})['\"]"
         ),
         "exclude": re.compile(
-            r"(process\.env|os\.environ|os\.getenv|ENV\[|System\.getenv|env\(|YOUR_|REPLACE_|xxx|placeholder|example|test|fake|dummy)",
+            r"(process\.env|os\.environ|os\.getenv|ENV\[|System\.getenv|env\()",
+            re.IGNORECASE,
+        ),
+        "value_exclude": re.compile(
+            r"(YOUR_|REPLACE_|xxx|placeholder|example|test|fake|dummy)",
             re.IGNORECASE,
         ),
         "message": (
@@ -198,44 +206,6 @@ PATTERNS = [
 ]
 
 
-def debug_log(msg):
-    """Append timestamped debug message."""
-    try:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        with open(DEBUG_LOG, "a") as f:
-            f.write(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
-
-
-def get_state_file(session_id):
-    """Session-scoped state file for dedup."""
-    return os.path.expanduser(f"~/.claude/.seal_scanner_state_{session_id}.json")
-
-
-def load_shown(session_id):
-    """Load shown warning keys."""
-    path = get_state_file(session_id)
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                return set(json.load(f))
-        except (json.JSONDecodeError, IOError):
-            return set()
-    return set()
-
-
-def save_shown(session_id, shown):
-    """Persist shown warning keys."""
-    path = get_state_file(session_id)
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(list(shown), f)
-    except IOError:
-        pass
-
-
 def is_env_file(file_path):
     """Check if file is an expected secrets file (.env, .env.local, etc.)."""
     basename = os.path.basename(file_path)
@@ -267,6 +237,13 @@ def scan_content(content, file_path):
                 if rule["exclude"].search(context):
                     continue
 
+            # For API assignments, placeholder words only suppress the match
+            # when they are part of the quoted value, not the variable name.
+            if rule.get("value_exclude"):
+                quoted_value = match.groupdict().get("quoted_value", "")
+                if rule["value_exclude"].search(quoted_value):
+                    continue
+
             return rule["name"], rule["message"], rule["block"]
 
     return None, None, False
@@ -278,7 +255,7 @@ def main():
         raw = sys.stdin.read()
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        debug_log(f"JSON parse error: {e}")
+        debug_log(f"JSON parse error: {e}", DEBUG_LOG)
         sys.exit(0)
 
     session_id = data.get("session_id", "default")
@@ -294,7 +271,7 @@ def main():
     if not content:
         sys.exit(0)
 
-    debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)")
+    debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
 
     rule_name, message, should_block = scan_content(content, file_path)
 
@@ -305,14 +282,17 @@ def main():
             should_block = False
 
         warning_key = f"{rule_name}:{file_path}"
-        shown = load_shown(session_id)
+        shown = load_shown(session_id, STATE_PREFIX)
 
         if warning_key not in shown:
             shown.add(warning_key)
-            save_shown(session_id, shown)
+            save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
 
             print(message, file=sys.stderr)
-            debug_log(f"{'BLOCKED' if should_block else 'WARNED'}: {rule_name} in {file_path}")
+            debug_log(
+                f"{'BLOCKED' if should_block else 'WARNED'}: {rule_name} in {file_path}",
+                DEBUG_LOG,
+            )
 
             if should_block:
                 sys.exit(2)
