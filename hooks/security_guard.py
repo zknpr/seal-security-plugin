@@ -265,7 +265,7 @@ def main():
 
     if rule_name and message:
         # Dedup: only show each rule+command combo once per session
-        warning_key = f"{rule_name}:{hashlib.sha256(command.encode('utf-8')).hexdigest()}"
+        warning_key = f"{rule_name}:{hashlib.sha256(command.encode('utf-8', errors='replace')).hexdigest()}"
         shown = load_shown(session_id, STATE_PREFIX)
 
         if warning_key not in shown:

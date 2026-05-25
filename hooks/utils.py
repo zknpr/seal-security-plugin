@@ -33,7 +33,7 @@ def load_shown(session_id, prefix):
         try:
             with open(path, "r") as f:
                 return set(json.load(f))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, TypeError):
             return set()
     return set()
 

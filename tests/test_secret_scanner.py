@@ -33,6 +33,12 @@ def test_extract_content_reads_write_and_edit_payloads():
         ),
         ("aws_key = 'AKIAIOSFODNN7EXAMPLE'", "aws_key", True),
         ("test_api_key = '" + "A" * 30 + "'", "api_key_assignment", False),
+        ('api_key = "live_test_token_1234567890"', "api_key_assignment", False),
+        (
+            'api_key = "dummyservice_prod_key_1234567890"',
+            "api_key_assignment",
+            False,
+        ),
         (
             "token = 'eyJaaaaaaaaaaa.eyJbbbbbbbbbbb.cccccccccccc'",
             "jwt_token",

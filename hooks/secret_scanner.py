@@ -99,6 +99,7 @@ PATTERNS = [
         "block": True,
     },
     # --- Generic API key patterns ---
+    # value_exclude rules must define a (?P<quoted_value>...) group; otherwise it falls back to the full match.
     {
         "name": "api_key_assignment",
         "pattern": re.compile(
@@ -111,7 +112,7 @@ PATTERNS = [
             re.IGNORECASE,
         ),
         "value_exclude": re.compile(
-            r"(YOUR_|REPLACE_|xxx|placeholder|example|test|fake|dummy)",
+            r"(x{3,}|0{3,}|your[_\- ].*|replace[_\- ].*|placeholder.*|<.*>|changeme|example|sample|test|fake|dummy|mock)",
             re.IGNORECASE,
         ),
         "message": (
@@ -238,10 +239,11 @@ def scan_content(content, file_path):
                     continue
 
             # For API assignments, placeholder words only suppress the match
-            # when they are part of the quoted value, not the variable name.
+            # when the complete quoted value is a placeholder form.
             if rule.get("value_exclude"):
-                quoted_value = match.groupdict().get("quoted_value", "")
-                if rule["value_exclude"].search(quoted_value):
+                quoted_value = match.groupdict().get("quoted_value")
+                target = quoted_value if quoted_value is not None else match.group(0)
+                if rule["value_exclude"].fullmatch(target):
                     continue
 
             return rule["name"], rule["message"], rule["block"]
