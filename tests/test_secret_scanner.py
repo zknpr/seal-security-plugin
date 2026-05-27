@@ -70,6 +70,80 @@ def test_scan_content_excludes_negative_and_dummy_patterns(content):
     assert scan_content(content, "/repo/app.py") == (None, None, False)
 
 
+import re
+
+def test_scan_content_exclude_window():
+    test_pattern = re.compile(r"SECRET_MATCH")
+    test_exclude = re.compile(r"IGNORE_ME")
+    mock_patterns = [
+        {
+            "name": "test_exclude_rule",
+            "pattern": test_pattern,
+            "exclude": test_exclude,
+            "message": "Blocked test rule",
+            "block": True,
+        }
+    ]
+
+    # Test 1: Match without exclude -> Should block
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        rule_name, message, should_block = scan_content("Here is a SECRET_MATCH.", "test.py")
+        assert rule_name == "test_exclude_rule"
+
+    # Test 2: Match with exclude nearby (within 100 chars) -> Should skip
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        content = "IGNORE_ME " + "SECRET_MATCH"
+        assert scan_content(content, "test.py") == (None, None, False)
+
+        content = "SECRET_MATCH " + "IGNORE_ME"
+        assert scan_content(content, "test.py") == (None, None, False)
+
+        content = "a" * 90 + " IGNORE_ME " + "SECRET_MATCH"
+        assert scan_content(content, "test.py") == (None, None, False)
+
+    # Test 3: Match with exclude far away (outside 100 chars window) -> Should block
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        content = "IGNORE_ME" + "a" * 150 + "SECRET_MATCH"
+        rule_name, _, _ = scan_content(content, "test.py")
+        assert rule_name == "test_exclude_rule"
+
+
+def test_scan_content_value_exclude():
+    # Test with named group 'quoted_value'
+    mock_patterns_named = [
+        {
+            "name": "test_value_exclude_named",
+            "pattern": re.compile(r"API_KEY=(?P<quoted_value>.*)"),
+            "value_exclude": re.compile(r"test_value"),
+            "message": "Blocked named",
+            "block": True,
+        }
+    ]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns_named):
+        # Excluded value
+        assert scan_content("API_KEY=test_value", "test.py") == (None, None, False)
+        # Not excluded value
+        rule_name, _, _ = scan_content("API_KEY=real_value", "test.py")
+        assert rule_name == "test_value_exclude_named"
+
+    # Test without named group (falls back to group(0))
+    mock_patterns_unnamed = [
+        {
+            "name": "test_value_exclude_unnamed",
+            "pattern": re.compile(r"API_KEY=.*"),
+            "value_exclude": re.compile(r"API_KEY=test_value"),
+            "message": "Blocked unnamed",
+            "block": True,
+        }
+    ]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns_unnamed):
+        # Excluded value
+        assert scan_content("API_KEY=test_value", "test.py") == (None, None, False)
+        # Not excluded value
+        rule_name, _, _ = scan_content("API_KEY=real_value", "test.py")
+        assert rule_name == "test_value_exclude_unnamed"
+
+
 def test_main_allows_invalid_json_and_logs_parse_error():
     with patch("sys.stdin.read", return_value="bad"), patch.object(
         secret_scanner, "debug_log"
