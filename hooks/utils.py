@@ -12,6 +12,10 @@ from datetime import datetime
 
 def debug_log(msg, log_file):
     """Append a timestamped debug message to the requested hook log file."""
+    # Fast path: only log if SEAL_DEBUG is enabled
+    if not os.environ.get("SEAL_DEBUG"):
+        return
+
     # Best-effort logger: it must NEVER break the hook. msg can carry untrusted
     # text (command/file_path) including lone surrogates, so f.write() may raise
     # UnicodeEncodeError (a ValueError, not OSError); swallow everything here.
