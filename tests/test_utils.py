@@ -37,3 +37,36 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path):
     # let it propagate and crash the hook before rule evaluation.
     log_file = tmp_path / "debug.log"
     debug_log("payload \ud800 end", str(log_file))
+
+def test_load_shown_returns_empty_set_for_invalid_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    path = get_state_file("invalid-json", "seal_guard_state")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("{invalid json")
+
+    assert load_shown("invalid-json", "seal_guard_state") == set()
+
+def test_load_shown_handles_oserror(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    path = get_state_file("oserror", "seal_guard_state")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write('["test"]')
+
+    import builtins
+
+    def mock_open(*args, **kwargs):
+        raise OSError("Permission denied")
+
+    with monkeypatch.context() as m:
+        m.setattr(builtins, "open", mock_open)
+        assert load_shown("oserror", "seal_guard_state") == set()
