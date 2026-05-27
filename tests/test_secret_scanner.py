@@ -6,14 +6,39 @@ import secret_scanner
 from secret_scanner import extract_content, is_env_file, main, scan_content
 
 
-def test_is_env_file_identifies_expected_secret_files():
-    assert is_env_file("/repo/.env")
-    assert is_env_file("/repo/.env.local")
-    assert is_env_file("/repo/credentials")
-    assert is_env_file("/repo/secrets.yaml")
-    assert is_env_file("/repo/secrets.yml")
-    assert is_env_file("/repo/secrets.json")
-    assert not is_env_file("/repo/app.py")
+@pytest.mark.parametrize(
+    ("filepath", "expected"),
+    [
+        # Happy paths - expected secrets files
+        ("/repo/.env", True),
+        ("/repo/.env.local", True),
+        ("/repo/.env.development", True),
+        ("/repo/.env.test", True),
+        ("/repo/.environment", True),
+        ("/repo/credentials", True),
+        ("/repo/secrets.yaml", True),
+        ("/repo/secrets.yml", True),
+        ("/repo/secrets.json", True),
+
+        # Files without directory path
+        (".env", True),
+        (".env.production", True),
+        ("credentials", True),
+        ("secrets.json", True),
+
+        # Negative cases - shouldn't match
+        ("/repo/app.py", False),
+        ("/repo/config.json", False),
+        ("/repo/env", False),           # missing dot
+        ("/repo/my.env", False),        # doesn't start with .env
+        ("/repo/my_credentials.txt", False),
+        ("/repo/secrets.txt", False),
+        ("env", False),
+        ("my.env", False),
+    ],
+)
+def test_is_env_file_identifies_expected_secret_files(filepath, expected):
+    assert is_env_file(filepath) == expected
 
 
 def test_extract_content_reads_write_and_edit_payloads():
