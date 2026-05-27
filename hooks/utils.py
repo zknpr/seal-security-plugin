@@ -16,6 +16,7 @@ def debug_log(msg, log_file):
     # text (command/file_path) including lone surrogates, so f.write() may raise
     # UnicodeEncodeError (a ValueError, not OSError); swallow everything here.
     try:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         with open(log_file, "a") as f:
             f.write(f"[{ts}] {msg}\n")
