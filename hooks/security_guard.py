@@ -230,11 +230,17 @@ RULES = [
 ]
 
 
+# Optimize performance by caching the search method and removing dict lookups
+OPTIMIZED_RULES = tuple(
+    (rule["pattern"].search, rule["name"], rule["message"])
+    for rule in RULES
+)
+
 def check_command(command):
     """Check a Bash command against all security rules. Returns (rule_name, message) or (None, None)."""
-    for rule in RULES:
-        if rule["pattern"].search(command):
-            return rule["name"], rule["message"]
+    for search, name, message in OPTIMIZED_RULES:
+        if search(command):
+            return name, message
     return None, None
 
 
