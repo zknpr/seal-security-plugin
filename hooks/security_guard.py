@@ -259,7 +259,7 @@ def main():
     if not command:
         sys.exit(0)
 
-    debug_log(f"Checking command: {command[:200]}", DEBUG_LOG)
+    debug_log(f"Checking Bash command (length: {len(command)})", DEBUG_LOG)
 
     rule_name, message = check_command(command)
 
@@ -273,7 +273,7 @@ def main():
             save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
 
             print(message, file=sys.stderr)
-            debug_log(f"BLOCKED: {rule_name} — {command[:100]}", DEBUG_LOG)
+            debug_log(f"BLOCKED: {rule_name}", DEBUG_LOG)
 
             # Exit 2 = block for BLOCKED rules, 0 = warn-only for WARNING rules
             if "BLOCKED" in message:
