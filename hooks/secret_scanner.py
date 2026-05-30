@@ -25,7 +25,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, get_state_file, load_shown, save_shown
+from utils import debug_log, get_state_file, load_shown, save_shown, check_and_update_warning
 
 DEBUG_LOG = "/tmp/seal-secret-scanner.log"
 STATE_PREFIX = "seal_scanner_state"
@@ -284,12 +284,8 @@ def main():
             should_block = False
 
         warning_key = f"{rule_name}:{file_path}"
-        shown = load_shown(session_id, STATE_PREFIX)
 
-        if warning_key not in shown:
-            shown.add(warning_key)
-            save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-
+        if check_and_update_warning(session_id, STATE_PREFIX, warning_key, DEBUG_LOG):
             print(message, file=sys.stderr)
             debug_log(
                 f"{'BLOCKED' if should_block else 'WARNED'}: {rule_name} in {file_path}",

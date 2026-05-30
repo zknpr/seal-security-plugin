@@ -51,3 +51,18 @@ def save_shown(session_id, prefix, shown, log_file=None):
     except OSError as e:
         if log_file is not None:
             debug_log(f"Failed to save state file: {e}", log_file)
+
+
+def check_and_update_warning(session_id, prefix, warning_key, log_file=None):
+    """Check if a warning has been shown, and if not, record it.
+
+    Returns:
+        bool: True if the warning is new and should be shown, False if it was already shown.
+    """
+    shown = load_shown(session_id, prefix)
+
+    if warning_key not in shown:
+        shown.add(warning_key)
+        save_shown(session_id, prefix, shown, log_file)
+        return True
+    return False
