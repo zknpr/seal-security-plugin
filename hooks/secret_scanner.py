@@ -207,12 +207,12 @@ PATTERNS = [
 ]
 
 
+_SECRET_FILES = frozenset({"credentials", "secrets.yaml", "secrets.yml", "secrets.json"})
+
 def is_env_file(file_path):
     """Check if file is an expected secrets file (.env, .env.local, etc.)."""
     basename = os.path.basename(file_path)
-    return basename.startswith(".env") or basename in (
-        "credentials", "secrets.yaml", "secrets.yml", "secrets.json"
-    )
+    return basename.startswith(".env") or basename in _SECRET_FILES
 
 
 def extract_content(tool_name, tool_input):
