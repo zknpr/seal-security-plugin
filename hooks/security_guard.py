@@ -238,14 +238,19 @@ def check_command(command):
     return None, None
 
 
-def main():
-    """Main hook entry point. Reads tool input from stdin, checks against rules."""
+def parse_input():
+    """Read and parse the JSON input from stdin."""
     try:
         raw = sys.stdin.read()
-        data = json.loads(raw)
+        return json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
         debug_log(f"JSON parse error: {e}", DEBUG_LOG)
         sys.exit(0)  # allow on parse failure
+
+
+def main():
+    """Main hook entry point. Reads tool input from stdin, checks against rules."""
+    data = parse_input()
 
     session_id = data.get("session_id", "default")
     tool_name = data.get("tool_name", "")
