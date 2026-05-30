@@ -68,15 +68,3 @@ def test_scan_content_reports_positive_secret_patterns(content, expected_rule, s
 )
 def test_scan_content_excludes_negative_and_dummy_patterns(content):
     assert scan_content(content, "/repo/app.py") == (None, None, False)
-
-
-def test_main_allows_invalid_json_and_logs_parse_error():
-    with patch("sys.stdin.read", return_value="bad"), patch.object(
-        secret_scanner, "debug_log"
-    ) as debug_log:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
-    assert debug_log.call_args is not None
-    assert "JSON parse error" in debug_log.call_args.args[0]

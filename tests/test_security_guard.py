@@ -45,15 +45,3 @@ def test_check_command_reports_each_security_rule(command, expected_rule):
 
     assert rule_name == expected_rule
     assert "SEAL" in message
-
-
-def test_main_allows_invalid_json_and_logs_parse_error():
-    with patch("sys.stdin.read", return_value="bad"), patch.object(
-        security_guard, "debug_log"
-    ) as debug_log:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
-    assert debug_log.call_args is not None
-    assert "JSON parse error" in debug_log.call_args.args[0]

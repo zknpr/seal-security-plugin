@@ -1,6 +1,27 @@
 import os
 
-from utils import debug_log, get_state_file, load_shown
+import pytest
+from unittest.mock import patch
+from utils import debug_log, get_state_file, load_shown, read_hook_input
+import utils
+
+
+def test_read_hook_input_allows_invalid_json_and_logs_parse_error():
+    with patch("sys.stdin.read", return_value="bad"), patch.object(
+        utils, "debug_log"
+    ) as mock_debug_log:
+        with pytest.raises(SystemExit) as exc:
+            read_hook_input("/tmp/log.log")
+
+    assert exc.value.code == 0
+    assert mock_debug_log.call_args is not None
+    assert "JSON parse error" in mock_debug_log.call_args.args[0]
+
+
+def test_read_hook_input_returns_parsed_json():
+    with patch("sys.stdin.read", return_value='{"key": "value"}'):
+        data = read_hook_input("/tmp/log.log")
+        assert data == {"key": "value"}
 
 
 def test_get_state_file_sanitizes_session_id_path_traversal():

@@ -7,7 +7,18 @@ and avoids side effects beyond the explicitly requested log and state writes.
 import json
 import os
 import re
+import sys
 from datetime import datetime
+
+
+def read_hook_input(log_file):
+    """Read tool input from stdin, parsing JSON and exiting gracefully on failure."""
+    try:
+        raw = sys.stdin.read()
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        debug_log(f"JSON parse error: {e}", log_file)
+        sys.exit(0)  # allow on parse failure
 
 
 def debug_log(msg, log_file):
