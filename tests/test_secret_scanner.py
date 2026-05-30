@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 import pytest
@@ -80,3 +81,95 @@ def test_main_allows_invalid_json_and_logs_parse_error():
     assert exc.value.code == 0
     assert debug_log.call_args is not None
     assert "JSON parse error" in debug_log.call_args.args[0]
+
+
+def test_main_clean_content_exits_success():
+    payload = json.dumps({
+        "session_id": "test1",
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": "/repo/clean.py",
+            "content": "print('clean')"
+        }
+    })
+    with patch("sys.stdin.read", return_value=payload):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 0
+
+
+def test_main_blocks_on_first_secret_exposure():
+    payload = json.dumps({
+        "session_id": "test2",
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": "/repo/app.py",
+            "content": "private_key = '0x" + "a" * 64 + "'"
+        }
+    })
+
+    with patch("sys.stdin.read", return_value=payload), \
+         patch("sys.stderr.write") as mock_stderr, \
+         patch.object(secret_scanner, "load_shown", return_value=set()), \
+         patch.object(secret_scanner, "save_shown") as mock_save:
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+    mock_save.assert_called_once()
+    mock_stderr.assert_called()
+
+
+def test_main_does_not_block_already_shown_secret():
+    payload = json.dumps({
+        "session_id": "test3",
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": "/repo/app.py",
+            "content": "private_key = '0x" + "a" * 64 + "'"
+        }
+    })
+
+    shown_set = {"eth_private_key:/repo/app.py"}
+
+    with patch("sys.stdin.read", return_value=payload), \
+         patch.object(secret_scanner, "load_shown", return_value=shown_set), \
+         patch.object(secret_scanner, "save_shown") as mock_save:
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_save.assert_not_called()
+
+
+def test_main_warns_instead_of_blocking_on_env_files():
+    payload = json.dumps({
+        "session_id": "test4",
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": "/repo/.env",
+            "content": "private_key = '0x" + "a" * 64 + "'"
+        }
+    })
+
+    with patch("sys.stdin.read", return_value=payload), \
+         patch("sys.stderr.write"), \
+         patch.object(secret_scanner, "load_shown", return_value=set()), \
+         patch.object(secret_scanner, "save_shown") as mock_save:
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_save.assert_called_once()
+
+
+def test_main_ignores_irrelevant_tools():
+    payload = json.dumps({
+        "session_id": "test5",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/repo/app.py"}
+    })
+    with patch("sys.stdin.read", return_value=payload):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 0
