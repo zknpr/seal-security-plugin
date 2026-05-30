@@ -19,7 +19,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, get_state_file, load_shown, save_shown
+from utils import check_and_update_shown, debug_log, get_state_file, load_shown, save_shown
 
 # Log file for debugging hook behavior
 DEBUG_LOG = "/tmp/seal-security-guard.log"
@@ -266,12 +266,8 @@ def main():
     if rule_name and message:
         # Dedup: only show each rule+command combo once per session
         warning_key = f"{rule_name}:{hashlib.sha256(command.encode('utf-8', errors='replace')).hexdigest()}"
-        shown = load_shown(session_id, STATE_PREFIX)
 
-        if warning_key not in shown:
-            shown.add(warning_key)
-            save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-
+        if check_and_update_shown(session_id, STATE_PREFIX, warning_key, DEBUG_LOG):
             print(message, file=sys.stderr)
             debug_log(f"BLOCKED: {rule_name} — {command[:100]}", DEBUG_LOG)
 
