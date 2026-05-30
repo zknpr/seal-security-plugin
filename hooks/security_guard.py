@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import debug_log, get_state_file, load_shown, save_shown
 
 # Log file for debugging hook behavior
-DEBUG_LOG = "/tmp/seal-security-guard.log"
+DEBUG_LOG = os.path.expanduser("~/.claude/seal-security-guard.log")
 STATE_PREFIX = "seal_guard_state"
 
 # State file tracks which warnings have been shown per session

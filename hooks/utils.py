@@ -17,6 +17,7 @@ def debug_log(msg, log_file):
     # UnicodeEncodeError (a ValueError, not OSError); swallow everything here.
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         with open(log_file, "a") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
