@@ -52,11 +52,11 @@ def test_extract_content_reads_write_and_edit_payloads():
     [
         ("private_key = '0x" + "a" * 64 + "'", "eth_private_key", True),
         (
-            "seed = 'abandon ability able about above absent absorb abstract absurd abuse access accident'",
+            "seed = 'abandon ability able about above absent absorb abstract absurd abuse access accident'",  # seal-allow-secret
             "mnemonic_phrase",
             True,
         ),
-        ("aws_key = 'AKIAIOSFODNN7EXAMPLE'", "aws_key", True),
+        ("aws_key = 'AKIAIOSFODNN7EXAMPLE'", "aws_key", True),  # seal-allow-secret
         ("test_api_key = '" + "A" * 30 + "'", "api_key_assignment", False),
         ('api_key = "live_test_token_1234567890"', "api_key_assignment", False),
         (
@@ -156,6 +156,25 @@ def test_scan_content_value_exclude():
         assert scan_content("API_KEY=placeholder_value", "test.py") == (None, None, False)
         rule_name, _, _ = scan_content("API_KEY=real_secret", "test.py")
         assert rule_name == "test_value_exclude_unnamed"
+
+
+def test_scan_content_respects_allowlist_marker():
+    # A line carrying the seal-allow-secret marker is not flagged; a marker on a
+    # different line does not suppress the finding.
+    mock_patterns = [{
+        "name": "fake_rule",
+        "pattern": re.compile(r"SECRET_TOKEN_HERE"),
+        "message": "[SEAL] BLOCKED: test",
+        "block": True,
+    }]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        rule_name, _, _ = scan_content("k = SECRET_TOKEN_HERE", "t.py")
+        assert rule_name == "fake_rule"
+
+        assert scan_content("k = SECRET_TOKEN_HERE  # seal-allow-secret", "t.py") == (None, None, False)
+
+        rule_name, _, _ = scan_content("# seal-allow-secret\nk = SECRET_TOKEN_HERE", "t.py")
+        assert rule_name == "fake_rule"
 
 
 def test_main_clean_content_exits_success():

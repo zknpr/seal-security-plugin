@@ -163,8 +163,14 @@ RULES = [
         "name": "rm_rf_dangerous",
         "block": True,
         "pattern": re.compile(
+            # rm with a force/recursive flag, targeting a filesystem or HOME root.
+            # The target must be a *root* (followed by space, end-of-string, or a
+            # glob), so a specific path like `rm -f ~/.claude/state.json` is not
+            # flagged, while bare `rm -rf /` (no trailing space) and `rm -rf ~/*`
+            # are. ~user matches a home root; ~/sub or /usr/local still match the
+            # /usr-style entries below.
             r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*-rf\s+|.*-fr\s+)"
-            r"(/\s|/\*|~|/usr|/etc|/var|/home|/System|\$HOME/?\s|/root)",
+            r"(/(?:\s|$)|/\*|~[\w]*/?(?:\s|$|\*)|/usr|/etc|/var|/home|/System|\$HOME/?(?:\s|$)|/root)",
             re.IGNORECASE,
         ),
         "message": (

@@ -18,6 +18,8 @@ from security_guard import check_command, main
         "git reset --soft",
         "chmod 755 file",
         "rm -rf ./tmp",
+        "rm -f ~/.claude/state.json",   # non-recursive, specific file under home
+        "rm -rf ~/Downloads",           # recursive but a specific subdir, not a root
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -46,8 +48,10 @@ def test_check_command_allows_safe_commands(command):
         ("pip install https://github.com/acme/pkg", "install_github_url"),
         ("sudo systemctl restart sshd", "sudo_sensitive"),
         ("rm -rf / ", "rm_rf_dangerous"),
+        ("rm -rf /", "rm_rf_dangerous"),       # bare root, no trailing space (EOL)
         ("rm -rf /etc", "rm_rf_dangerous"),
         ("rm -fr ~", "rm_rf_dangerous"),
+        ("rm -rf ~/*", "rm_rf_dangerous"),     # wipe everything under home
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),

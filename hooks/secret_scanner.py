@@ -17,6 +17,7 @@ Does NOT block writes to:
 - .env files (expected to contain secrets, but warns)
 - .gitignore'd paths (user has already excluded from VCS)
 - Test fixtures with obviously fake values
+- Lines carrying a `seal-allow-secret` marker (explicit per-line opt-out)
 """
 
 import os
@@ -31,6 +32,11 @@ from utils import debug_log, load_shown, read_hook_input, save_shown
 # symlink/info-disclosure risk (CWE-377).
 DEBUG_LOG = os.path.expanduser("~/.claude/seal-secret-scanner.log")
 STATE_PREFIX = "seal_scanner_state"
+
+# Explicit per-line opt-out: a line carrying this marker (e.g. a known-fake
+# secret in a test fixture) is not flagged. Mirrors detect-secrets'
+# "pragma: allowlist secret" / gitleaks' "gitleaks:allow".
+ALLOWLIST_MARKER = "seal-allow-secret"
 
 # BIP39 wordlist subset — first and last words from the official list
 # used to detect likely mnemonic phrases (12+ dictionary words in sequence)
@@ -226,11 +232,22 @@ def extract_content(tool_name, tool_input):
     return ""
 
 
+def _matched_line(content, index):
+    """Return the line of `content` that contains the character at `index`."""
+    start = content.rfind("\n", 0, index) + 1
+    end = content.find("\n", index)
+    return content[start:] if end == -1 else content[start:end]
+
+
 def scan_content(content, file_path):
     """Scan content against all patterns. Returns (rule_name, message, should_block) or (None, None, False)."""
     for rule in PATTERNS:
         match = rule["pattern"].search(content)
         if match:
+            # Explicit per-line allowlist: a `seal-allow-secret` marker on the
+            # matched line suppresses the finding (for known-fake test fixtures).
+            if ALLOWLIST_MARKER in _matched_line(content, match.start()):
+                continue
             # Check exclude pattern — if the surrounding context matches, skip this rule
             if rule.get("exclude"):
                 # Check in the matched line and nearby context
