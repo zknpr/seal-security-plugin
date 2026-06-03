@@ -164,13 +164,17 @@ RULES = [
         "block": True,
         "pattern": re.compile(
             # rm with a force/recursive flag, targeting a filesystem or HOME root.
-            # The target must be a *root* (followed by space, end-of-string, or a
-            # glob), so a specific path like `rm -f ~/.claude/state.json` is not
-            # flagged, while bare `rm -rf /` (no trailing space) and `rm -rf ~/*`
-            # are. ~user matches a home root; ~/sub or /usr/local still match the
-            # /usr-style entries below.
+            # The target is matched only as a *root*: bare / (incl. end-of-string),
+            # a top-level glob (/*, ~/*, ~/.*, ~/.??*), HOME itself (~, ~user,
+            # $HOME), or a known system dir bounded by /, space, EOL or a glob.
+            # A specific path — `rm -f ~/.claude/x`, `rm -rf ~/Downloads`,
+            # `rm -rf /usrs` — is intentionally NOT flagged. System dirs require a
+            # trailing boundary so /usrs, /etcetera, /variable don't false-positive.
             r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*-rf\s+|.*-fr\s+)"
-            r"(/(?:\s|$)|/\*|~[\w]*/?(?:\s|$|\*)|/usr|/etc|/var|/home|/System|\$HOME/?(?:\s|$)|/root)",
+            r"(/(?:\s|$)|/\*"
+            r"|~[\w]*(?:/?(?:\s|$)|/[^\s/]*[*?])"
+            r"|/(?:usr|etc|var|home|System|root)(?:/|\s|$|\*)"
+            r"|\$HOME/?(?:\s|$))",
             re.IGNORECASE,
         ),
         "message": (

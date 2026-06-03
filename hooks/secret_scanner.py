@@ -242,13 +242,15 @@ def _matched_line(content, index):
 def scan_content(content, file_path):
     """Scan content against all patterns. Returns (rule_name, message, should_block) or (None, None, False)."""
     for rule in PATTERNS:
-        match = rule["pattern"].search(content)
-        if match:
+        # Iterate EVERY match, not just the first: a suppressed first match (via
+        # allowlist / exclude / value_exclude) must not skip the whole rule, or a
+        # later real secret of the same type would bypass the scanner.
+        for match in rule["pattern"].finditer(content):
             # Explicit per-line allowlist: a `seal-allow-secret` marker on the
-            # matched line suppresses the finding (for known-fake test fixtures).
+            # matched line suppresses THIS match (for known-fake test fixtures).
             if ALLOWLIST_MARKER in _matched_line(content, match.start()):
                 continue
-            # Check exclude pattern — if the surrounding context matches, skip this rule
+            # Check exclude pattern — if the surrounding context matches, skip this match
             if rule.get("exclude"):
                 # Check in the matched line and nearby context
                 match_start = max(0, match.start() - 100)

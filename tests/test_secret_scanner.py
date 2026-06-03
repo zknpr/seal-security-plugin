@@ -176,6 +176,31 @@ def test_scan_content_respects_allowlist_marker():
         rule_name, _, _ = scan_content("# seal-allow-secret\nk = SECRET_TOKEN_HERE", "t.py")
         assert rule_name == "fake_rule"
 
+        # An allowlisted match must NOT mask a later non-allowlisted match of the
+        # same rule (regression: a suppressed first match used to skip the rule).
+        rule_name, _, _ = scan_content(
+            "k1 = SECRET_TOKEN_HERE  # seal-allow-secret\nk2 = SECRET_TOKEN_HERE", "t.py"
+        )
+        assert rule_name == "fake_rule"
+
+
+def test_scan_content_exclude_does_not_mask_later_match():
+    # A first match suppressed by `exclude` must not hide a later real match of
+    # the same rule (same multi-match masking bug, via the exclude path).
+    mock_patterns = [{
+        "name": "ex_rule",
+        "pattern": re.compile(r"HIT"),
+        "exclude": re.compile(r"SKIP"),
+        "message": "[SEAL] BLOCKED: test",
+        "block": True,
+    }]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        # First HIT sits next to SKIP (excluded); the second HIT is clean and far
+        # outside the 100-char exclude window.
+        content = "SKIP HIT" + " " * 200 + "clean HIT"
+        rule_name, _, _ = scan_content(content, "t.py")
+        assert rule_name == "ex_rule"
+
 
 def test_main_clean_content_exits_success():
     payload = json.dumps({
