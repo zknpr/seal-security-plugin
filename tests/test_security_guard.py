@@ -66,6 +66,7 @@ def test_check_command_allows_safe_commands(command):
         ("rm -rf /etc{,bak}", "rm_rf_dangerous"),           # brace expansion
         ("rm -r -f /etc", "rm_rf_dangerous"),               # split short flags
         ("rm --recursive --force /etc", "rm_rf_dangerous"),  # long flags
+        ("rm --rec --force /etc", "rm_rf_dangerous"),        # abbreviated long flag (GNU)
         ("rm -rf -- /etc", "rm_rf_dangerous"),              # -- end-of-options marker
         ("rm -rf $HOME/*", "rm_rf_dangerous"),              # $HOME glob
         ('rm -rf "/"', "rm_rf_dangerous"),                  # quoted root

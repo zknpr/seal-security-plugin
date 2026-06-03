@@ -104,9 +104,10 @@ def _is_dangerous_rm(command):
     repeated slashes don't hide the target. It CANNOT see through — and will miss
     — forms that require evaluating the shell: variable indirection
     (`R=/; rm -rf $R`), command substitution / `bash -c "..."`, indirect deletes
-    (`... | xargs rm -rf`, `find / -exec rm -rf {} \\;`), and glob/brace
-    expansion that resolves to a root (`rm -rf /{etc,var}`, `/e?c`). Specific
-    files and subdirs under home are allowed; only roots are blocked.
+    (`... | xargs rm -rf`, `find / -exec rm -rf {} \\;`), glob/brace expansion
+    that resolves to a root (`rm -rf /{etc,var}`, `/e?c`), and launcher-specific
+    options before the command (`sudo -u user rm ...`). Specific files and subdirs
+    under home are allowed; only roots are blocked.
     """
     for sub in _SHELL_SEPARATORS.split(command):
         words = sub.split()
@@ -118,9 +119,11 @@ def _is_dangerous_rm(command):
         for w in words[rm_at + 1:]:
             if not options_ended and w == "--":
                 options_ended = True  # everything after `--` is an operand
-            elif not options_ended and w.startswith("--"):
-                recursive |= w == "--recursive"
-                force |= w == "--force"
+            elif not options_ended and w.startswith("--") and len(w) > 2:
+                # GNU rm accepts unambiguous abbreviations: --rec == --recursive.
+                opt = w[2:].split("=", 1)[0]
+                recursive |= "recursive".startswith(opt)
+                force |= "force".startswith(opt)
             elif not options_ended and w.startswith("-") and len(w) > 1:
                 recursive |= "r" in w or "R" in w
                 force |= "f" in w
