@@ -202,6 +202,22 @@ def test_scan_content_exclude_does_not_mask_later_match():
         assert rule_name == "ex_rule"
 
 
+def test_scan_content_value_exclude_does_not_mask_later_match():
+    # A first match suppressed by value_exclude must not hide a later real match
+    # of the same rule (the third multi-match masking path).
+    mock_patterns = [{
+        "name": "ve_rule",
+        "pattern": re.compile(r"KEY=(?P<quoted_value>\S+)"),
+        "value_exclude": re.compile(r"PLACEHOLDER"),
+        "message": "[SEAL] BLOCKED: test",
+        "block": True,
+    }]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        content = "KEY=PLACEHOLDER\nKEY=real_value_not_placeholder"
+        rule_name, _, _ = scan_content(content, "t.py")
+        assert rule_name == "ve_rule"
+
+
 def test_main_clean_content_exits_success():
     payload = json.dumps({
         "session_id": "test1",

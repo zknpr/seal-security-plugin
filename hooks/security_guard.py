@@ -30,7 +30,65 @@ STATE_PREFIX = "seal_guard_state"
 # so we don't nag repeatedly for the same pattern in one session
 
 
-# Each rule: name, compiled pattern, message, and an explicit `block` flag.
+# A single (already separator-free) target token that names a filesystem or HOME
+# root. Specific files/subdirs (~/Downloads, /tmp, ~/.config, $HOME/file) are NOT
+# roots and are intentionally allowed; home/filesystem/system roots are blocked.
+_RM_ROOT_TOKEN = re.compile(
+    r"^(?:"
+    r"/\*?$"                                          # the filesystem root: "/" or "/*"
+    r"|/(?:usr|etc|var|home|System|root)(?![\w.-])"   # a system dir (then /, brace, glob, EOL ...)
+    r"|~[\w]*/?$"                                      # "~", "~user", "~/"
+    r"|~[\w]*/\*"                                      # "~/*"
+    r"|~[\w]*/[^/]*[*?]"                               # first-segment home glob: ~/.* ~/.??* ~/foo*
+    r"|\$HOME/?$"                                      # "$HOME", "$HOME/"
+    r"|\$HOME/\*"                                      # "$HOME/*"
+    r"|\$HOME/[^/]*[*?]"                               # "$HOME/<glob>"
+    r")",
+    re.IGNORECASE,
+)
+
+# Shell command separators — split on these so a trailing `; cmd` (or && / || /
+# pipe / subshell) can't shield the destructive rm from inspection.
+_SHELL_SEPARATORS = re.compile(r"&&|\|\||[;&|\n()]")
+
+
+def _is_dangerous_rm(command):
+    """True if `command` recursively force-deletes a filesystem/home root.
+
+    A heuristic — it can't see through variables, eval, or quoting — but it parses
+    each sub-command's flags and targets, so shell separators, brace expansion,
+    split/long flags, and `--` no longer hide the target. Specific files and
+    subdirs under home are allowed; only roots are blocked.
+    """
+    for sub in _SHELL_SEPARATORS.split(command):
+        words = sub.split()
+        # Match `rm`, `sudo rm`, `/bin/rm`, etc.
+        rm_at = next(
+            (i for i, w in enumerate(words) if w == "rm" or w.endswith("/rm")),
+            None,
+        )
+        if rm_at is None:
+            continue
+        recursive = force = False
+        targets = []
+        for w in words[rm_at + 1:]:
+            if w == "--":
+                continue  # end-of-options marker
+            if w.startswith("--"):
+                recursive |= w == "--recursive"
+                force |= w == "--force"
+            elif w.startswith("-") and len(w) > 1:
+                recursive |= "r" in w or "R" in w
+                force |= "f" in w
+            else:
+                targets.append(w)
+        if recursive and force and any(_RM_ROOT_TOKEN.match(t) for t in targets):
+            return True
+    return False
+
+
+# Each rule: name, a compiled `pattern` (or a `check` callable for non-regex
+# logic), message, and an explicit `block` flag.
 # block=True -> exit 2 (hard block); omitted/False -> exit 0 (warn-only).
 # Enforcement reads this flag, never the message text, so re-wording a message
 # can't change the security boundary. Rules are checked in order; first match wins.
@@ -162,21 +220,10 @@ RULES = [
     {
         "name": "rm_rf_dangerous",
         "block": True,
-        "pattern": re.compile(
-            # rm with a force/recursive flag, targeting a filesystem or HOME root.
-            # The target is matched only as a *root*: bare / (incl. end-of-string),
-            # a top-level glob (/*, ~/*, ~/.*, ~/.??*), HOME itself (~, ~user,
-            # $HOME), or a known system dir bounded by /, space, EOL or a glob.
-            # A specific path — `rm -f ~/.claude/x`, `rm -rf ~/Downloads`,
-            # `rm -rf /usrs` — is intentionally NOT flagged. System dirs require a
-            # trailing boundary so /usrs, /etcetera, /variable don't false-positive.
-            r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*-rf\s+|.*-fr\s+)"
-            r"(/(?:\s|$)|/\*"
-            r"|~[\w]*(?:/?(?:\s|$)|/[^\s/]*[*?])"
-            r"|/(?:usr|etc|var|home|System|root)(?:/|\s|$|\*)"
-            r"|\$HOME/?(?:\s|$))",
-            re.IGNORECASE,
-        ),
+        # Parsed rather than regex-matched (see _is_dangerous_rm) so shell
+        # separators, brace expansion, split/long flags and `--` can't hide the
+        # target, while specific files/subdirs under home stay allowed.
+        "check": _is_dangerous_rm,
         "message": (
             "[SEAL] BLOCKED: rm -rf targeting system/home directory.\n"
             "This could cause catastrophic data loss. Double-check the target path.\n"
@@ -257,7 +304,9 @@ def check_command(command):
     enforcement never depends on the message wording.
     """
     for rule in RULES:
-        if rule["pattern"].search(command):
+        check = rule.get("check")
+        matched = check(command) if check else rule["pattern"].search(command)
+        if matched:
             return rule["name"], rule["message"], rule.get("block", False)
     return None, None, False
 

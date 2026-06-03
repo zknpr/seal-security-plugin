@@ -41,8 +41,12 @@ ALLOWLIST_MARKER = "seal-allow-secret"
 # BIP39 wordlist subset — first and last words from the official list
 # used to detect likely mnemonic phrases (12+ dictionary words in sequence)
 # We check for sequences of 12+ lowercase alpha words as a heuristic.
+# Whitespace between words is horizontal-only ([^\S\r\n], i.e. NOT newlines): a
+# seed phrase is a single line, and letting the match span lines would let an
+# allowlisted line absorb a real phrase on the next line (per-match suppression
+# in scan_content only inspects the line of the match start).
 MNEMONIC_PATTERN = re.compile(
-    r"\b([a-z]{3,8}\s+){11,23}[a-z]{3,8}\b"
+    r"\b([a-z]{3,8}[^\S\r\n]+){11,23}[a-z]{3,8}\b"
 )
 
 # Pattern definitions: (name, regex, message, block?)

