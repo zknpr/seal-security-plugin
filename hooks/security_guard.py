@@ -52,14 +52,34 @@ def _split_subcommands(command):
 
     Quote-aware: a separator inside a quoted string (`printf 'a; rm -rf /'`) is
     NOT treated as a new command, so quoted/example text isn't a false positive.
-    Heredoc bodies are not tracked — see _is_dangerous_rm's documented limits.
+    Backslash escapes are tracked when unquoted and inside double quotes, so an
+    escaped quote (`printf "x \\"; rm -rf /"`) does not prematurely close the
+    string and split harmless text into a fake `rm` subcommand. Single quotes are
+    literal in the shell (no escapes inside them). Heredoc bodies are not tracked
+    — see _is_dangerous_rm's documented limits.
     """
     subs, buf, quote = [], [], None
-    for c in command:
-        if quote:
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote == "'":
             buf.append(c)
-            if c == quote:
+            if c == "'":
                 quote = None
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                buf.append(c)
+                buf.append(command[i + 1])  # keep escaped char; an escaped " stays open
+                i += 2
+                continue
+            buf.append(c)
+            if c == '"':
+                quote = None
+        elif c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(command[i + 1])       # escaped separator/quote is literal text
+            i += 2
+            continue
         elif c in ("'", '"'):
             quote = c
             buf.append(c)
@@ -68,6 +88,7 @@ def _split_subcommands(command):
             buf = []
         else:
             buf.append(c)
+        i += 1
     subs.append("".join(buf))
     return subs
 
@@ -75,20 +96,33 @@ def _split_subcommands(command):
 def _collapse_path(token):
     """Resolve `.`/`..` components in a path-like target (best effort).
 
-    So `~/Downloads/../*` (which Bash expands to the home root) is seen as `~/*`.
-    Does not climb above a leading ~, ~user, $HOME or / anchor.
+    `~/Downloads/../*` (which Bash expands to the home root) is seen as `~/*`.
+    Climbing one level ABOVE a leading ~, ~user or $HOME anchor (`~/../*`,
+    `~/.cache/../../*`) escapes the home directory to its parent (`/home`, or `/`
+    for root) — still a destructive root — so it is re-anchored to the filesystem
+    root `/` instead of being left as an unmatched `~/../*`. Cannot climb above an
+    absolute `/`.
     """
     if "/" not in token:
         return token
     out = []
+    escaped_root = False
     for part in token.split("/"):
         if part == ".":
             continue
-        if (part == ".." and out and out[-1] not in ("", "..")
-                and not out[-1].startswith(("~", "$"))):
-            out.pop()
-        else:
-            out.append(part)
+        if part == "..":
+            if out and out[-1] not in ("", "..") and not out[-1].startswith(("~", "$")):
+                out.pop()                       # pop a normal component
+            elif out and out[-1].startswith(("~", "$")):
+                out.pop()                       # climbing above home escapes to a root
+                escaped_root = True
+            # else: at/above an absolute root or stacked `..` — cannot climb higher
+            continue
+        out.append(part)
+    if escaped_root:
+        # At or above the home parent: a filesystem-root target. Re-anchor to "/"
+        # so _RM_ROOT_TOKEN can match (e.g. ~/../* -> /*, ~/.. -> /).
+        return "/" + "/".join(p for p in out if p)
     return "/".join(out)
 
 
@@ -105,6 +139,54 @@ def _normalize_rm_target(token):
     token = re.sub(r"^/{2,}", "/", token)
     token = _collapse_path(token)
     return token
+
+
+def _shell_split(segment):
+    """Split one sub-command into shell WORDS on unquoted whitespace.
+
+    Quote- and escape-aware, and performs quote removal, so `FOO="a b" rm -rf /etc`
+    tokenizes to ['FOO=a b', 'rm', '-rf', '/etc'] — the assignment stays one word
+    and the following rm is still seen in command position — instead of
+    str.split()'s ['FOO="a', 'b"', 'rm', ...], which hid the rm. Quoted targets
+    keep their spaces and lose their quotes, mirroring how the shell builds argv.
+    Not a full shell parser (no variable/glob expansion).
+    """
+    words, buf, quote, had = [], [], None, False
+    i, n = 0, len(segment)
+    while i < n:
+        c = segment[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            else:
+                buf.append(c)
+        elif quote == '"':
+            # Inside double quotes Bash only treats \ as an escape before " \ $ `.
+            if c == "\\" and i + 1 < n and segment[i + 1] in ('"', "\\", "$", "`"):
+                buf.append(segment[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+            else:
+                buf.append(c)
+        elif c == "\\" and i + 1 < n:
+            buf.append(segment[i + 1])            # unquoted escape -> literal next char
+            i += 2
+            continue
+        elif c in ("'", '"'):
+            quote = c
+            had = True                            # an (even empty) quoted section is a word
+        elif c.isspace():
+            if had or buf:
+                words.append("".join(buf))
+                buf, had = [], False
+        else:
+            buf.append(c)
+        i += 1
+    if had or buf:
+        words.append("".join(buf))
+    return words
 
 
 def _is_rm_word(word):
@@ -154,7 +236,7 @@ def _is_dangerous_rm(command):
     Specific files and subdirs under home are allowed; only roots are blocked.
     """
     for sub in _split_subcommands(command):
-        words = sub.split()
+        words = _shell_split(sub)
         rm_at = _rm_invocation_index(words)
         if rm_at is None:
             continue
@@ -164,10 +246,14 @@ def _is_dangerous_rm(command):
             if not options_ended and w == "--":
                 options_ended = True  # everything after `--` is an operand
             elif not options_ended and w.startswith("--") and len(w) > 2:
-                # GNU rm accepts unambiguous abbreviations: --rec == --recursive.
-                opt = w[2:].split("=", 1)[0]
-                recursive |= "recursive".startswith(opt)
-                force |= "force".startswith(opt)
+                # GNU rm accepts unambiguous abbreviations (--rec == --recursive),
+                # but --recursive/--force take NO value: --force=no and --=x are
+                # option errors that abort before deleting, so they must not set
+                # the flags (an empty prefix would otherwise match every option).
+                opt = w[2:]
+                if opt and "=" not in opt:
+                    recursive |= "recursive".startswith(opt)
+                    force |= "force".startswith(opt)
             elif not options_ended and w.startswith("-") and len(w) > 1:
                 recursive |= "r" in w or "R" in w
                 force |= "f" in w

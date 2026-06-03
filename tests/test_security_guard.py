@@ -5,7 +5,13 @@ from unittest.mock import patch
 import pytest
 
 import security_guard
-from security_guard import check_command, main
+from security_guard import (
+    _collapse_path,
+    _shell_split,
+    _split_subcommands,
+    check_command,
+    main,
+)
 
 
 @pytest.mark.parametrize(
@@ -28,8 +34,12 @@ from security_guard import check_command, main
         "echo rm -rf /etc",             # rm in argument position, not the command
         "rm -- -rf /etc",               # -rf is an operand after --, not a flag
         "rm -rf ~/foo/../bar",          # .. resolves to a specific subdir, not a root
+        "rm -rf ~/../foo",              # climbs above home but to a specific named dir, not a root
         "printf 'x; rm -rf /'",         # separator is inside a quoted string
         "echo 'a && rm -rf /'",         # quoted example text, not an executed delete
+        'printf "x \\"; rm -rf /"',     # escaped quote keeps ; inside the string (not a real subcommand)
+        "rm --force=no -r /etc",        # --force takes no value: option error, no delete
+        "rm --=x /etc",                 # empty long-option name is an error, not -r/-f
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -80,6 +90,11 @@ def test_check_command_allows_safe_commands(command):
         ('rm -rf "$HOME"/.*', "rm_rf_dangerous"),           # partially-quoted home glob
         ("rm -rf //", "rm_rf_dangerous"),                   # repeated leading slash
         ("\\rm -rf /etc", "rm_rf_dangerous"),               # backslash-escaped rm (alias bypass)
+        ("rm -rf ~/../*", "rm_rf_dangerous"),               # .. climbs above home to the root glob
+        ("rm -rf ~/.cache/../../*", "rm_rf_dangerous"),     # deeper .. still escapes the home anchor
+        ("rm -rf $HOME/../*", "rm_rf_dangerous"),           # $HOME escaped to the root glob
+        ("rm -rf ~/..", "rm_rf_dangerous"),                 # the home parent (/home or /) itself
+        ('FOO="a b" rm -rf /etc', "rm_rf_dangerous"),       # quoted-whitespace assignment before rm
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),
@@ -275,3 +290,47 @@ def test_main_ignores_empty_command(capsys):
             main()
 
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize(
+    ("segment", "expected"),
+    [
+        # A quoted-whitespace assignment stays one word so the following rm is
+        # still seen in command position (was shattered by str.split()).
+        ('FOO="a b" rm -rf /etc', ["FOO=a b", "rm", "-rf", "/etc"]),
+        # Quote removal mirrors how the shell builds argv.
+        ('rm -rf "$HOME/Downloads"', ["rm", "-rf", "$HOME/Downloads"]),
+        ("rm -rf '/'", ["rm", "-rf", "/"]),
+        # An unquoted backslash escapes the next char (\rm -> rm).
+        ("\\rm -rf /etc", ["rm", "-rf", "/etc"]),
+        ("echo hello", ["echo", "hello"]),
+    ],
+)
+def test_shell_split_is_quote_and_escape_aware(segment, expected):
+    assert _shell_split(segment) == expected
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("~/Downloads/../*", "~/*"),     # collapses to the home root
+        ("~/foo/../bar", "~/bar"),       # a specific subdir under home, not a root
+        ("~/../*", "/*"),                # climbs above home -> filesystem-root glob
+        ("~/.cache/../../*", "/*"),      # deeper climb still escapes the anchor
+        ("~/..", "/"),                   # the home parent itself
+        ("$HOME/../*", "/*"),            # $HOME anchor escaped the same way
+        ("~/../foo", "/foo"),            # escaped but to a specific (non-root) dir
+    ],
+)
+def test_collapse_path_resolves_traversal(token, expected):
+    assert _collapse_path(token) == expected
+
+
+def test_split_subcommands_keeps_escaped_quote_inside_string():
+    # An escaped quote must not close the double-quoted string, so the `;` stays
+    # inside it and the harmless printf is a single sub-command (no fake rm).
+    assert _split_subcommands('printf "x \\"; rm -rf /"') == ['printf "x \\"; rm -rf /"']
+
+
+def test_split_subcommands_splits_on_unquoted_separator():
+    assert _split_subcommands("rm -rf /etc; echo ok") == ["rm -rf /etc", " echo ok"]
