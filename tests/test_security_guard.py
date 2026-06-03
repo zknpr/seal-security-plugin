@@ -23,6 +23,7 @@ from security_guard import check_command, main
         "rm -rf /usrs",                 # not /usr — substring must not match
         "rm -rf /etcetera",             # not /etc
         "rm -rf /variable",             # not /var
+        "rm -rf ~/Downloads/*",         # glob in a specific subdir, not a home root
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -57,6 +58,7 @@ def test_check_command_allows_safe_commands(command):
         ("rm -rf ~/*", "rm_rf_dangerous"),     # wipe everything under home
         ("rm -rf ~/.*", "rm_rf_dangerous"),    # wipe hidden entries under home
         ("rm -rf ~/.??*", "rm_rf_dangerous"),  # hidden-glob variant
+        ("rm -rf ~/Doc*", "rm_rf_dangerous"),  # home-root prefix glob (e.g. Documents/Desktop/Downloads)
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),
