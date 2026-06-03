@@ -95,6 +95,9 @@ def test_check_command_allows_safe_commands(command):
         ("rm -rf $HOME/../*", "rm_rf_dangerous"),           # $HOME escaped to the root glob
         ("rm -rf ~/..", "rm_rf_dangerous"),                 # the home parent (/home or /) itself
         ('FOO="a b" rm -rf /etc', "rm_rf_dangerous"),       # quoted-whitespace assignment before rm
+        ("rm -rf /etc/..", "rm_rf_dangerous"),              # absolute .. walks back to /
+        ("rm -rf /usr/../..", "rm_rf_dangerous"),           # stacked absolute .. still resolves to /
+        ("rm -rf $HOME/..", "rm_rf_dangerous"),             # the $HOME parent
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),
@@ -319,7 +322,11 @@ def test_shell_split_is_quote_and_escape_aware(segment, expected):
         ("~/.cache/../../*", "/*"),      # deeper climb still escapes the anchor
         ("~/..", "/"),                   # the home parent itself
         ("$HOME/../*", "/*"),            # $HOME anchor escaped the same way
+        ("$HOME/..", "/"),               # bare $HOME parent
         ("~/../foo", "/foo"),            # escaped but to a specific (non-root) dir
+        ("/etc/..", "/"),                # absolute climb back to the root stays "/"
+        ("/usr/../..", "/"),             # stacked absolute .. cannot pass /
+        ("/usr/local", "/usr/local"),    # an ordinary absolute path is unchanged
     ],
 )
 def test_collapse_path_resolves_traversal(token, expected):

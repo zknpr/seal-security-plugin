@@ -97,11 +97,12 @@ def _collapse_path(token):
     """Resolve `.`/`..` components in a path-like target (best effort).
 
     `~/Downloads/../*` (which Bash expands to the home root) is seen as `~/*`.
-    Climbing one level ABOVE a leading ~, ~user or $HOME anchor (`~/../*`,
-    `~/.cache/../../*`) escapes the home directory to its parent (`/home`, or `/`
-    for root) — still a destructive root — so it is re-anchored to the filesystem
-    root `/` instead of being left as an unmatched `~/../*`. Cannot climb above an
-    absolute `/`.
+    Climbing back to a root keeps the root anchor rather than collapsing to an
+    unmatched empty/`~/..` form: an absolute path that walks back to `/`
+    (`/etc/..`, `/usr/../..`) stays `/`, and climbing ABOVE a leading ~, ~user or
+    $HOME anchor (`~/../*`, `~/.cache/../../*`, `~/..`) escapes home to its parent
+    (`/home`, or `/` for root) — still a destructive root — and re-anchors to `/`.
+    Cannot climb above an absolute `/`.
     """
     if "/" not in token:
         return token
@@ -119,10 +120,13 @@ def _collapse_path(token):
             # else: at/above an absolute root or stacked `..` — cannot climb higher
             continue
         out.append(part)
-    if escaped_root:
-        # At or above the home parent: a filesystem-root target. Re-anchor to "/"
-        # so _RM_ROOT_TOKEN can match (e.g. ~/../* -> /*, ~/.. -> /).
-        return "/" + "/".join(p for p in out if p)
+    rest = [p for p in out if p]                       # drop empty segments
+    if escaped_root or token.startswith("/"):
+        # An absolute path, or a climb that escaped a home anchor, anchors at the
+        # filesystem root. Collapsing back to the root must stay "/" (not "") so
+        # _RM_ROOT_TOKEN still matches: /etc/.. -> /, /usr/../.. -> /, ~/../* ->
+        # /*, ~/.. -> /.
+        return "/" + "/".join(rest)
     return "/".join(out)
 
 

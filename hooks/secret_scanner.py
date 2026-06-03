@@ -60,7 +60,10 @@ def _load_bip39_words():
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bip39_english.txt")
         with open(path, "r", encoding="utf-8") as f:
             words = frozenset(line.strip() for line in f if line.strip())
-    except OSError:
+    except (OSError, UnicodeError):
+        # Never crash the import: a missing/unreadable file is OSError, but a
+        # corrupt asset with invalid UTF-8 raises UnicodeDecodeError while
+        # iterating lines. Both fail safe to an empty set (structural fallback).
         return frozenset()
     # Fail safe: a truncated/garbled asset must not silently weaken detection.
     # The BIP39 English list is exactly 2048 words; if it isn't (or is the wrong

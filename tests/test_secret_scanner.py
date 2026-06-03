@@ -396,3 +396,12 @@ def test_main_handles_non_dict_tool_input(bad_tool_input):
         with pytest.raises(SystemExit) as exc:
             main()
     assert exc.value.code == 0
+
+
+def test_load_bip39_words_failsafe_on_decode_error():
+    # A corrupt wordlist with invalid UTF-8 raises UnicodeDecodeError while the
+    # file is read. The loader must not let that crash the module import; it fails
+    # safe to an empty set (mnemonic detection falls back to the structural regex).
+    boom = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    with patch("secret_scanner.open", side_effect=boom):
+        assert secret_scanner._load_bip39_words() == frozenset()
