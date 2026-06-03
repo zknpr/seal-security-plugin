@@ -29,7 +29,9 @@ claude plugin install seal-security@github:zknpr/seal-security-plugin
 - **BLOCKED** (prevents execution): Private keys, mnemonics, AWS keys, SSH keys, PGP keys, pipe-to-shell, chmod 777, force push to main, rm -rf system dirs
 - **WARNING** (shows message, allows execution): API key assignments, JWTs, webhooks, npm install without --ignore-scripts, env dumps, SSL verification disable
 - `.env` files are warned but never blocked (they're expected to contain secrets)
-- Each warning shown only once per session per file/command (no nagging)
+- Each **warning** is shown only once per session per file/command (no nagging); **blocked** actions are always enforced, on every occurrence
+- Add a `seal-allow-secret` comment on a line to opt that line out of secret scanning (for known-fake values in test fixtures)
+- Debug logging is **opt-in**: set `SEAL_DEBUG=1` to write hook logs under `~/.claude/` (off by default)
 
 ## Covered Security Domains
 
