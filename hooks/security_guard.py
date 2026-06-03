@@ -111,7 +111,8 @@ def _is_dangerous_rm(command):
 # logic), message, and an explicit `block` flag.
 # block=True -> exit 2 (hard block); omitted/False -> exit 0 (warn-only).
 # Enforcement reads this flag, never the message text, so re-wording a message
-# can't change the security boundary. Rules are checked in order; first match wins.
+# can't change the security boundary. Rules are checked in order; a BLOCK match
+# wins immediately, otherwise the first WARNING is returned (see check_command).
 
 RULES = [
     # --- Pipe-to-shell: remote code execution ---
