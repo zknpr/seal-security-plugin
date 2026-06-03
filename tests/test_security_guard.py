@@ -104,6 +104,25 @@ def test_check_command_block_flag_matches_rule_class(command, expected_block):
     assert block is expected_block
 
 
+def test_check_command_block_beats_warning():
+    # A BLOCK rule must win over an earlier WARNING rule that also matches, so a
+    # destructive rm hidden behind sudo/env is hard-blocked, not merely warned.
+    name, _, block = check_command("sudo rm -rf /")
+    assert (name, block) == ("rm_rf_dangerous", True)
+    name, _, block = check_command("env rm -rf /etc")
+    assert (name, block) == ("rm_rf_dangerous", True)
+    # A pure warning is still returned as a warning.
+    name, _, block = check_command("sudo systemctl restart sshd")
+    assert (name, block) == ("sudo_sensitive", False)
+
+
+def test_check_command_non_string_is_safe():
+    # A non-string command must not crash the hook (never-crash contract).
+    assert check_command(["rm", "-rf", "/"]) == (None, None, False)
+    assert check_command(None) == (None, None, False)
+    assert check_command(123) == (None, None, False)
+
+
 def test_main_allows_safe_bash_command(capsys):
     payload = {
         "session_id": "test_session",

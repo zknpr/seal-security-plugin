@@ -299,16 +299,26 @@ RULES = [
 def check_command(command):
     """Check a Bash command against the rules.
 
-    Returns (rule_name, message, block) on the first match, else (None, None, False).
-    `block` is the rule's explicit enforcement flag (default False = warn-only);
-    enforcement never depends on the message wording.
+    Returns (rule_name, message, block), else (None, None, False). A BLOCK rule
+    always wins over a WARNING rule, so e.g. `sudo rm -rf /` (which also matches
+    the sudo *warning*) is still hard-blocked rather than merely warned. `block`
+    is the rule's explicit flag (default False); enforcement never depends on the
+    message wording.
     """
+    if not isinstance(command, str):
+        return None, None, False  # never-crash: only string commands are scannable
+    warning = None
     for rule in RULES:
         check = rule.get("check")
-        matched = check(command) if check else rule["pattern"].search(command)
-        if matched:
-            return rule["name"], rule["message"], rule.get("block", False)
-    return None, None, False
+        pattern = rule.get("pattern")
+        matched = check(command) if check else (pattern.search(command) if pattern else None)
+        if not matched:
+            continue
+        if rule.get("block", False):
+            return rule["name"], rule["message"], True  # a block beats any pending warning
+        if warning is None:
+            warning = (rule["name"], rule["message"], False)
+    return warning if warning is not None else (None, None, False)
 
 
 def main():
@@ -324,7 +334,8 @@ def main():
         sys.exit(0)
 
     command = tool_input.get("command", "")
-    if not command:
+    # A non-string command (list/number/null) must not crash the hook downstream.
+    if not isinstance(command, str) or not command:
         sys.exit(0)
 
     # Log the length, never the command text: a command may carry a pasted

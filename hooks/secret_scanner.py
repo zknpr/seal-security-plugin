@@ -41,12 +41,12 @@ ALLOWLIST_MARKER = "seal-allow-secret"
 # Mnemonic detection is two-stage: a cheap structural regex finds candidate runs
 # of 12-24 short lowercase words, then we confirm the words are actually BIP39
 # wordlist entries — otherwise ordinary prose ("the quick brown fox ...") trips it.
-# Whitespace between words is horizontal-only ([^\S\r\n], i.e. NOT newlines): a
-# seed phrase is a single line, and letting the match span lines would let an
-# allowlisted line absorb a real phrase on the next line (per-match suppression
-# in scan_content only inspects the line of the match start).
+# Whitespace between words is space/tab only ([ \t], NOT newlines or exotic
+# Unicode line separators like U+2028): a seed phrase is a single line, and
+# letting the match span lines would let an allowlisted line absorb a real phrase
+# on the next line (per-match suppression inspects only the match-start line).
 MNEMONIC_PATTERN = re.compile(
-    r"\b([a-z]{3,8}[^\S\r\n]+){11,23}[a-z]{3,8}\b"
+    r"\b([a-z]{3,8}[ \t]+){11,23}[a-z]{3,8}\b"
 )
 
 
