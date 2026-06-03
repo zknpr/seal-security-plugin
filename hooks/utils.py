@@ -7,20 +7,50 @@ and avoids side effects beyond the explicitly requested log and state writes.
 import json
 import os
 import re
+import sys
 from datetime import datetime
 
 
 def debug_log(msg, log_file):
     """Append a timestamped debug message to the requested hook log file."""
+    # Opt-in only: the debug log persists plaintext file-path fragments, so it
+    # stays OFF unless SEAL_DEBUG is set to a truthy value (1/true/yes/on). This
+    # avoids both per-call I/O and writing sensitive content by default. An
+    # explicit allow-list means SEAL_DEBUG=0 / false correctly disables it.
+    if os.environ.get("SEAL_DEBUG", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return
     # Best-effort logger: it must NEVER break the hook. msg can carry untrusted
     # text (command/file_path) including lone surrogates, so f.write() may raise
     # UnicodeEncodeError (a ValueError, not OSError); swallow everything here.
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         with open(log_file, "a") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def read_hook_input(log_file):
+    """Read, parse, and shape-check the hook's JSON tool input from stdin.
+
+    Both hooks share the same stdin -> json.loads -> graceful-exit flow, so it
+    lives here instead of being duplicated. On malformed OR unexpectedly-shaped
+    input we log and exit 0 (allow): a parser hiccup or a non-object payload must
+    never crash — and thus block — a legitimate tool call.
+    """
+    try:
+        raw = sys.stdin.read()
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        debug_log(f"JSON parse error: {e}", log_file)
+        sys.exit(0)  # allow on parse failure
+    # A hook payload is always a JSON object. Anything else (list/null/number/str)
+    # would make the callers' data.get(...) raise AttributeError, so guard here.
+    if not isinstance(data, dict):
+        debug_log(f"Unexpected hook input type: {type(data).__name__}", log_file)
+        sys.exit(0)  # allow on unexpected shape
+    return data
 
 
 def get_state_file(session_id, prefix):

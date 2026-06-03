@@ -13,16 +13,17 @@ Catches dangerous shell commands based on SEAL framework principles:
 """
 
 import hashlib
-import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, get_state_file, load_shown, save_shown
+from utils import debug_log, load_shown, read_hook_input, save_shown
 
-# Log file for debugging hook behavior
-DEBUG_LOG = "/tmp/seal-security-guard.log"
+# Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
+# rather than a predictable /tmp path, which in a world-writable directory is a
+# symlink/info-disclosure risk (CWE-377).
+DEBUG_LOG = os.path.expanduser("~/.claude/seal-security-guard.log")
 STATE_PREFIX = "seal_guard_state"
 
 # State file tracks which warnings have been shown per session
@@ -240,16 +241,11 @@ def check_command(command):
 
 def main():
     """Main hook entry point. Reads tool input from stdin, checks against rules."""
-    try:
-        raw = sys.stdin.read()
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError) as e:
-        debug_log(f"JSON parse error: {e}", DEBUG_LOG)
-        sys.exit(0)  # allow on parse failure
+    data = read_hook_input(DEBUG_LOG)
 
     session_id = data.get("session_id", "default")
     tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {})
+    tool_input = data.get("tool_input") or {}
 
     # Only process Bash tool calls
     if tool_name != "Bash":
@@ -259,28 +255,29 @@ def main():
     if not command:
         sys.exit(0)
 
-    debug_log(f"Checking command: {command[:200]}", DEBUG_LOG)
+    # Log the length, never the command text: a command may carry a pasted
+    # secret and the debug log is a durable plaintext file.
+    debug_log(f"Checking command (length: {len(command)})", DEBUG_LOG)
 
     rule_name, message = check_command(command)
 
     if rule_name and message:
-        # Dedup: only show each rule+command combo once per session
+        # BLOCKED rules must enforce on EVERY occurrence. Enforcement must never
+        # sit behind the once-per-session dedup, or a dangerous command would be
+        # allowed just by repeating it. Dedup applies only to WARNING text.
+        if "BLOCKED" in message:
+            print(message, file=sys.stderr)
+            debug_log(f"BLOCKED: {rule_name}", DEBUG_LOG)
+            sys.exit(2)
+
+        # Warning: show each rule+command combo once per session, then allow.
         warning_key = f"{rule_name}:{hashlib.sha256(command.encode('utf-8', errors='replace')).hexdigest()}"
         shown = load_shown(session_id, STATE_PREFIX)
-
         if warning_key not in shown:
             shown.add(warning_key)
             save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-
             print(message, file=sys.stderr)
-            debug_log(f"BLOCKED: {rule_name} — {command[:100]}", DEBUG_LOG)
-
-            # Exit 2 = block for BLOCKED rules, 0 = warn-only for WARNING rules
-            if "BLOCKED" in message:
-                sys.exit(2)
-            else:
-                # Warnings: show message but allow execution
-                sys.exit(0)
+            debug_log(f"WARNED: {rule_name}", DEBUG_LOG)
 
     sys.exit(0)
 

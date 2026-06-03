@@ -19,15 +19,17 @@ Does NOT block writes to:
 - Test fixtures with obviously fake values
 """
 
-import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, get_state_file, load_shown, save_shown
+from utils import debug_log, load_shown, read_hook_input, save_shown
 
-DEBUG_LOG = "/tmp/seal-secret-scanner.log"
+# Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
+# rather than a predictable /tmp path, which in a world-writable directory is a
+# symlink/info-disclosure risk (CWE-377).
+DEBUG_LOG = os.path.expanduser("~/.claude/seal-secret-scanner.log")
 STATE_PREFIX = "seal_scanner_state"
 
 # BIP39 wordlist subset — first and last words from the official list
@@ -253,16 +255,11 @@ def scan_content(content, file_path):
 
 def main():
     """Main hook entry point."""
-    try:
-        raw = sys.stdin.read()
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError) as e:
-        debug_log(f"JSON parse error: {e}", DEBUG_LOG)
-        sys.exit(0)
+    data = read_hook_input(DEBUG_LOG)
 
     session_id = data.get("session_id", "default")
     tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {})
+    tool_input = data.get("tool_input") or {}
 
     if tool_name not in ("Write", "Edit"):
         sys.exit(0)
@@ -283,21 +280,22 @@ def main():
             message = message.replace("BLOCKED", "NOTE (env file)")
             should_block = False
 
+        # A blocking secret must be blocked on EVERY write. Enforcement must never
+        # sit behind the once-per-session dedup, or a later same-rule write to the
+        # same file (the dedup key is rule:file_path) would slip through.
+        if should_block:
+            print(message, file=sys.stderr)
+            debug_log(f"BLOCKED: {rule_name} in {file_path}", DEBUG_LOG)
+            sys.exit(2)
+
+        # Warning (incl. the .env note): show once per session, then allow.
         warning_key = f"{rule_name}:{file_path}"
         shown = load_shown(session_id, STATE_PREFIX)
-
         if warning_key not in shown:
             shown.add(warning_key)
             save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-
             print(message, file=sys.stderr)
-            debug_log(
-                f"{'BLOCKED' if should_block else 'WARNED'}: {rule_name} in {file_path}",
-                DEBUG_LOG,
-            )
-
-            if should_block:
-                sys.exit(2)
+            debug_log(f"WARNED: {rule_name} in {file_path}", DEBUG_LOG)
 
     sys.exit(0)
 
