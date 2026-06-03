@@ -38,9 +38,9 @@ STATE_PREFIX = "seal_scanner_state"
 # "pragma: allowlist secret" / gitleaks' "gitleaks:allow".
 ALLOWLIST_MARKER = "seal-allow-secret"
 
-# BIP39 wordlist subset — first and last words from the official list
-# used to detect likely mnemonic phrases (12+ dictionary words in sequence)
-# We check for sequences of 12+ lowercase alpha words as a heuristic.
+# Mnemonic detection is two-stage: a cheap structural regex finds candidate runs
+# of 12-24 short lowercase words, then we confirm the words are actually BIP39
+# wordlist entries — otherwise ordinary prose ("the quick brown fox ...") trips it.
 # Whitespace between words is horizontal-only ([^\S\r\n], i.e. NOT newlines): a
 # seed phrase is a single line, and letting the match span lines would let an
 # allowlisted line absorb a real phrase on the next line (per-match suppression
@@ -48,6 +48,44 @@ ALLOWLIST_MARKER = "seal-allow-secret"
 MNEMONIC_PATTERN = re.compile(
     r"\b([a-z]{3,8}[^\S\r\n]+){11,23}[a-z]{3,8}\b"
 )
+
+
+def _load_bip39_words():
+    """Load the official 2048-word BIP39 English wordlist for mnemonic validation.
+
+    Returns a frozenset, or an empty set if the vendored file is unavailable — in
+    which case mnemonic detection falls back to the structural regex alone.
+    """
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bip39_english.txt")
+        with open(path, "r", encoding="utf-8") as f:
+            return frozenset(line.strip() for line in f if line.strip())
+    except OSError:
+        return frozenset()
+
+
+BIP39_WORDS = _load_bip39_words()
+
+
+def _looks_like_seed_phrase(text):
+    """True if `text` has >= 12 consecutive BIP39 words (i.e. a real seed phrase).
+
+    A run of short lowercase words is only a mnemonic if the words are actually
+    from the BIP39 list, so this filters out prose / identifier lists that the
+    structural regex would otherwise flag. If the wordlist couldn't be loaded we
+    accept the structural match (fail safe — better a false positive than a miss).
+    """
+    if not BIP39_WORDS:
+        return True
+    run = 0
+    for word in text.split():
+        if word in BIP39_WORDS:
+            run += 1
+            if run >= 12:
+                return True
+        else:
+            run = 0
+    return False
 
 # Pattern definitions: (name, regex, message, block?)
 PATTERNS = [
@@ -78,6 +116,8 @@ PATTERNS = [
             r"(test|example|sample|fixture|mock|lorem|ipsum|the\s+quick\s+brown)",
             re.IGNORECASE,
         ),
+        # Confirm the candidate is actually BIP39 words, not just any short-word run.
+        "validate": _looks_like_seed_phrase,
         "message": (
             "[SEAL] BLOCKED: Potential mnemonic seed phrase detected (12+ word sequence).\n"
             "NEVER store seed phrases in code or config files.\n"
@@ -270,6 +310,13 @@ def scan_content(content, file_path):
                 target = quoted_value if quoted_value is not None else match.group(0)
                 if rule["value_exclude"].fullmatch(target):
                     continue
+
+            # Optional semantic validation of the matched text (e.g. confirm a
+            # candidate mnemonic is actually BIP39 words). A failed check means
+            # this match is not a finding — keep scanning for a real one.
+            validate = rule.get("validate")
+            if validate and not validate(match.group(0)):
+                continue
 
             return rule["name"], rule["message"], rule["block"]
 

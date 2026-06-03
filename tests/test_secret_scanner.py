@@ -218,6 +218,37 @@ def test_scan_content_value_exclude_does_not_mask_later_match():
         assert rule_name == "ve_rule"
 
 
+def test_scan_content_ignores_non_bip39_word_run():
+    # A 12+ run of short lowercase words that aren't BIP39 (ordinary prose) must
+    # not be flagged as a mnemonic now that matches are validated against the
+    # wordlist. (Built from a list so this file itself isn't a 12-word sequence.)
+    prose = " ".join([
+        "the", "lazy", "brown", "dogs", "were", "running", "through", "green",
+        "valleys", "under", "cloudy", "winter", "skies", "yesterday",
+    ])
+    assert scan_content(prose, "/repo/notes.txt") == (None, None, False)
+
+
+def test_looks_like_seed_phrase_validates_against_bip39():
+    real = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    assert secret_scanner._looks_like_seed_phrase(real) is True
+    prose = " ".join([
+        "the", "lazy", "brown", "dogs", "were", "running", "through",
+        "green", "valleys", "under", "cloudy", "winter", "skies",
+    ])
+    assert secret_scanner._looks_like_seed_phrase(prose) is False
+
+
+def test_looks_like_seed_phrase_fails_safe_without_wordlist(monkeypatch):
+    # If the vendored wordlist can't be loaded, accept the structural match
+    # (better a false positive than missing a real seed).
+    monkeypatch.setattr(secret_scanner, "BIP39_WORDS", frozenset())
+    assert secret_scanner._looks_like_seed_phrase("any unknown words at all here now") is True
+
+
 def test_main_clean_content_exits_success():
     payload = json.dumps({
         "session_id": "test1",
