@@ -253,12 +253,13 @@ def test_main_ignores_irrelevant_tools():
     assert exc.value.code == 0
 
 
-def test_main_handles_null_tool_input():
-    # tool_input: null must not crash the hook (never-crash contract).
+@pytest.mark.parametrize("bad_tool_input", [None, "oops", 123, [1, 2]])
+def test_main_handles_non_dict_tool_input(bad_tool_input):
+    # A non-object tool_input must not crash the hook (never-crash contract).
     payload = json.dumps({
         "session_id": "test6",
         "tool_name": "Write",
-        "tool_input": None,
+        "tool_input": bad_tool_input,
     })
     with patch("sys.stdin.read", return_value=payload):
         with pytest.raises(SystemExit) as exc:

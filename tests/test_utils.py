@@ -145,6 +145,26 @@ def test_read_hook_input_allows_non_object_json(raw):
     assert exc.value.code == 0
 
 
+@pytest.mark.parametrize("raw", [
+    '{"tool_input": "oops"}',
+    '{"tool_input": 123}',
+    '{"tool_input": [1, 2]}',
+    '{"tool_input": null}',
+])
+def test_read_hook_input_coerces_non_dict_tool_input(raw):
+    # A present-but-non-object tool_input is normalized to {} so callers can
+    # safely call tool_input.get(...) without crashing.
+    with patch("sys.stdin.read", return_value=raw):
+        data = read_hook_input("/tmp/log.log")
+    assert data["tool_input"] == {}
+
+
+def test_read_hook_input_preserves_dict_tool_input():
+    with patch("sys.stdin.read", return_value='{"tool_input": {"command": "x"}}'):
+        data = read_hook_input("/tmp/log.log")
+    assert data["tool_input"] == {"command": "x"}
+
+
 def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     # A lone surrogate (e.g. from JSON "\ud800") can't encode to UTF-8 and would
     # raise UnicodeEncodeError on write; debug_log must swallow it rather than

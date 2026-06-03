@@ -259,7 +259,7 @@ def main():
 
     session_id = data.get("session_id", "default")
     tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input") or {}
+    tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
 
     if tool_name not in ("Write", "Edit"):
         sys.exit(0)

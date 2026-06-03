@@ -24,7 +24,9 @@ def debug_log(msg, log_file):
     # UnicodeEncodeError (a ValueError, not OSError); swallow everything here.
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        dirname = os.path.dirname(log_file)
+        if dirname:  # skip makedirs("") for a bare filename (would raise)
+            os.makedirs(dirname, exist_ok=True)
         with open(log_file, "a") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
@@ -37,7 +39,8 @@ def read_hook_input(log_file):
     Both hooks share the same stdin -> json.loads -> graceful-exit flow, so it
     lives here instead of being duplicated. On malformed OR unexpectedly-shaped
     input we log and exit 0 (allow): a parser hiccup or a non-object payload must
-    never crash — and thus block — a legitimate tool call.
+    never crash — and thus block — a legitimate tool call. A present-but-non-dict
+    ``tool_input`` is normalized to ``{}`` so callers can safely ``.get(...)``.
     """
     try:
         raw = sys.stdin.read()
@@ -50,6 +53,11 @@ def read_hook_input(log_file):
     if not isinstance(data, dict):
         debug_log(f"Unexpected hook input type: {type(data).__name__}", log_file)
         sys.exit(0)  # allow on unexpected shape
+    # Normalize a present-but-non-object tool_input to {}. A truthy non-dict
+    # (e.g. "oops", 1, [..]) slips past a `... or {}` guard and would crash on
+    # tool_input.get(...); coercing here keeps the never-crash contract central.
+    if "tool_input" in data and not isinstance(data["tool_input"], dict):
+        data["tool_input"] = {}
     return data
 
 

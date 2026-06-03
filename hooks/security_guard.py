@@ -30,13 +30,16 @@ STATE_PREFIX = "seal_guard_state"
 # so we don't nag repeatedly for the same pattern in one session
 
 
-# Each rule: (name, compiled regex or check function, message)
-# Rules are checked in order; first match wins.
+# Each rule: name, compiled pattern, message, and an explicit `block` flag.
+# block=True -> exit 2 (hard block); omitted/False -> exit 0 (warn-only).
+# Enforcement reads this flag, never the message text, so re-wording a message
+# can't change the security boundary. Rules are checked in order; first match wins.
 
 RULES = [
     # --- Pipe-to-shell: remote code execution ---
     {
         "name": "pipe_to_shell",
+        "block": True,
         "pattern": re.compile(
             r"(curl|wget|fetch)\s+.*\|\s*(sh|bash|zsh|python|python3|node|ruby|perl)",
             re.IGNORECASE,
@@ -50,6 +53,7 @@ RULES = [
     # --- chmod 777 / overly permissive ---
     {
         "name": "chmod_777",
+        "block": True,
         "pattern": re.compile(r"chmod\s+(-[a-zA-Z]+\s+)*777\b"),
         "message": (
             "[SEAL] BLOCKED: chmod 777 grants read/write/execute to everyone.\n"
@@ -60,6 +64,7 @@ RULES = [
     # --- chmod world-writable ---
     {
         "name": "chmod_world_writable",
+        "block": True,
         "pattern": re.compile(r"chmod\s+(-[a-zA-Z]+\s+)*o\+w\b"),
         "message": (
             "[SEAL] BLOCKED: Making files world-writable violates least-privilege.\n"
@@ -69,6 +74,7 @@ RULES = [
     # --- Force push to main/master ---
     {
         "name": "force_push_main",
+        "block": True,
         "pattern": re.compile(
             r"git\s+push\s+.*--force(-with-lease)?\s+.*(main|master)\b"
             r"|git\s+push\s+.*--force(-with-lease)?\s*$"
@@ -155,6 +161,7 @@ RULES = [
     # --- rm -rf with dangerous targets ---
     {
         "name": "rm_rf_dangerous",
+        "block": True,
         "pattern": re.compile(
             r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*-rf\s+|.*-fr\s+)"
             r"(/\s|/\*|~|/usr|/etc|/var|/home|/System|\$HOME/?\s|/root)",
@@ -183,6 +190,7 @@ RULES = [
     # --- Expose private keys via echo/cat ---
     {
         "name": "expose_private_key",
+        "block": True,
         "pattern": re.compile(
             r"(echo|printf|cat)\s+.*"
             r"(PRIVATE_KEY|SECRET_KEY|API_KEY|API_SECRET|MNEMONIC|SEED_PHRASE|SESSION_TOKEN)",
@@ -232,11 +240,16 @@ RULES = [
 
 
 def check_command(command):
-    """Check a Bash command against all security rules. Returns (rule_name, message) or (None, None)."""
+    """Check a Bash command against the rules.
+
+    Returns (rule_name, message, block) on the first match, else (None, None, False).
+    `block` is the rule's explicit enforcement flag (default False = warn-only);
+    enforcement never depends on the message wording.
+    """
     for rule in RULES:
         if rule["pattern"].search(command):
-            return rule["name"], rule["message"]
-    return None, None
+            return rule["name"], rule["message"], rule.get("block", False)
+    return None, None, False
 
 
 def main():
@@ -245,7 +258,7 @@ def main():
 
     session_id = data.get("session_id", "default")
     tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input") or {}
+    tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
 
     # Only process Bash tool calls
     if tool_name != "Bash":
@@ -259,13 +272,13 @@ def main():
     # secret and the debug log is a durable plaintext file.
     debug_log(f"Checking command (length: {len(command)})", DEBUG_LOG)
 
-    rule_name, message = check_command(command)
+    rule_name, message, should_block = check_command(command)
 
     if rule_name and message:
-        # BLOCKED rules must enforce on EVERY occurrence. Enforcement must never
+        # BLOCK rules must enforce on EVERY occurrence. Enforcement must never
         # sit behind the once-per-session dedup, or a dangerous command would be
         # allowed just by repeating it. Dedup applies only to WARNING text.
-        if "BLOCKED" in message:
+        if should_block:
             print(message, file=sys.stderr)
             debug_log(f"BLOCKED: {rule_name}", DEBUG_LOG)
             sys.exit(2)
