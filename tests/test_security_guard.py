@@ -24,6 +24,7 @@ from security_guard import check_command, main
         "rm -rf /etcetera",             # not /etc
         "rm -rf /variable",             # not /var
         "rm -rf ~/Downloads/*",         # glob in a specific subdir, not a home root
+        'rm -rf "$HOME/Downloads"',     # quoted specific subdir under home (not a root)
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -65,6 +66,11 @@ def test_check_command_allows_safe_commands(command):
         ("rm --recursive --force /etc", "rm_rf_dangerous"),  # long flags
         ("rm -rf -- /etc", "rm_rf_dangerous"),              # -- end-of-options marker
         ("rm -rf $HOME/*", "rm_rf_dangerous"),              # $HOME glob
+        ('rm -rf "/"', "rm_rf_dangerous"),                  # quoted root
+        ("rm -rf ${HOME}", "rm_rf_dangerous"),              # ${HOME} brace syntax
+        ('rm -rf "$HOME"/.*', "rm_rf_dangerous"),           # partially-quoted home glob
+        ("rm -rf //", "rm_rf_dangerous"),                   # repeated leading slash
+        ("\\rm -rf /etc", "rm_rf_dangerous"),               # backslash-escaped rm (alias bypass)
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),

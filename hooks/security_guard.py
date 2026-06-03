@@ -52,21 +52,41 @@ _RM_ROOT_TOKEN = re.compile(
 _SHELL_SEPARATORS = re.compile(r"&&|\|\||[;&|\n()]")
 
 
+def _normalize_rm_target(token):
+    """Undo the common, literal shell wrappers around an rm target token.
+
+    Handles surrounding quotes (`"/"`), `${HOME}` brace syntax, and repeated
+    leading slashes (`//`). Deliberately does NOT resolve variables, command
+    substitution, or glob/brace expansion — see _is_dangerous_rm's docstring.
+    """
+    token = token.replace('"', "").replace("'", "")  # quotes are shell syntax, not path
+    token = token.replace("${HOME}", "$HOME")
+    token = re.sub(r"^/{2,}", "/", token)
+    return token
+
+
+def _is_rm_word(word):
+    """True if `word` invokes rm: rm, /bin/rm, or a backslash-escaped \\rm."""
+    word = word.lstrip("\\")
+    return word == "rm" or word.endswith("/rm")
+
+
 def _is_dangerous_rm(command):
     """True if `command` recursively force-deletes a filesystem/home root.
 
-    A heuristic — it can't see through variables, eval, or quoting — but it parses
-    each sub-command's flags and targets, so shell separators, brace expansion,
-    split/long flags, and `--` no longer hide the target. Specific files and
-    subdirs under home are allowed; only roots are blocked.
+    A HEURISTIC for catching common and accidental destructive deletes, NOT a
+    security boundary. It parses each sub-command's flags and targets, so shell
+    separators, brace/split/long flags, `--`, quoted or `${HOME}` targets, and
+    repeated slashes don't hide the target. It CANNOT see through — and will miss
+    — forms that require evaluating the shell: variable indirection
+    (`R=/; rm -rf $R`), command substitution / `bash -c "..."`, indirect deletes
+    (`... | xargs rm -rf`, `find / -exec rm -rf {} \\;`), and glob/brace
+    expansion that resolves to a root (`rm -rf /{etc,var}`, `/e?c`). Specific
+    files and subdirs under home are allowed; only roots are blocked.
     """
     for sub in _SHELL_SEPARATORS.split(command):
         words = sub.split()
-        # Match `rm`, `sudo rm`, `/bin/rm`, etc.
-        rm_at = next(
-            (i for i, w in enumerate(words) if w == "rm" or w.endswith("/rm")),
-            None,
-        )
+        rm_at = next((i for i, w in enumerate(words) if _is_rm_word(w)), None)
         if rm_at is None:
             continue
         recursive = force = False
@@ -81,7 +101,7 @@ def _is_dangerous_rm(command):
                 recursive |= "r" in w or "R" in w
                 force |= "f" in w
             else:
-                targets.append(w)
+                targets.append(_normalize_rm_target(w))
         if recursive and force and any(_RM_ROOT_TOKEN.match(t) for t in targets):
             return True
     return False

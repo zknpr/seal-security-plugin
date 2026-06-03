@@ -249,6 +249,31 @@ def test_looks_like_seed_phrase_fails_safe_without_wordlist(monkeypatch):
     assert secret_scanner._looks_like_seed_phrase("any unknown words at all here now") is True
 
 
+def test_scan_content_exclude_stays_on_match_line():
+    # An exclude word on an ADJACENT line must not suppress a real seed on the
+    # next line — the exclude window is clamped to the match's own line.
+    phrase = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    content = "# test fixture nearby\n" + phrase
+    rule_name, _, block = scan_content(content, "/repo/wallet.txt")
+    assert rule_name == "mnemonic_phrase"
+    assert block is True
+
+
+def test_scan_content_allowlist_does_not_absorb_next_line_seed():
+    # An allowlisted fixture line must not let a real seed on the NEXT line be
+    # swallowed into one suppressed (cross-line) match.
+    phrase = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    content = "fixture = " + phrase + "  # seal-allow-secret\nreal = " + phrase
+    rule_name, _, _ = scan_content(content, "/repo/x.txt")
+    assert rule_name == "mnemonic_phrase"
+
+
 def test_main_clean_content_exits_success():
     payload = json.dumps({
         "session_id": "test1",

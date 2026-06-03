@@ -141,7 +141,7 @@ PATTERNS = [
     # --- AWS Secret Key pattern ---
     {
         "name": "aws_secret",
-        "pattern": re.compile(r"(?i)(aws_secret_access_key|aws_secret)\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}"),
+        "pattern": re.compile(r"(?i)(aws_secret_access_key|aws_secret)[ \t]*[=:][ \t]*['\"]?[A-Za-z0-9/+=]{40}"),
         "exclude": None,
         "message": (
             "[SEAL] BLOCKED: AWS Secret Access Key detected.\n"
@@ -156,7 +156,7 @@ PATTERNS = [
         "name": "api_key_assignment",
         "pattern": re.compile(
             r"(?i)(api[_-]?key|api[_-]?secret|api[_-]?token|auth[_-]?token|access[_-]?token"
-            r"|secret[_-]?key|client[_-]?secret)\s*[=:]\s*['\"]"
+            r"|secret[_-]?key|client[_-]?secret)[ \t]*[=:][ \t]*['\"]"
             r"(?P<quoted_value>[A-Za-z0-9_\-\.]{20,})['\"]"
         ),
         "exclude": re.compile(
@@ -294,13 +294,18 @@ def scan_content(content, file_path):
             # matched line suppresses THIS match (for known-fake test fixtures).
             if ALLOWLIST_MARKER in _matched_line(content, match.start()):
                 continue
-            # Check exclude pattern — if the surrounding context matches, skip this match
+            # Check the exclude pattern in a +-100 char window, but CLAMPED to the
+            # match's own line(s): a window that crossed newlines would let an
+            # exclude word on an adjacent line (`# test fixture\n<real secret>`)
+            # suppress the finding.
             if rule.get("exclude"):
-                # Check in the matched line and nearby context
-                match_start = max(0, match.start() - 100)
-                match_end = min(len(content), match.end() + 100)
-                context = content[match_start:match_end]
-                if rule["exclude"].search(context):
+                line_start = content.rfind("\n", 0, match.start()) + 1
+                line_end = content.find("\n", match.end())
+                if line_end == -1:
+                    line_end = len(content)
+                ctx_start = max(line_start, match.start() - 100)
+                ctx_end = min(line_end, match.end() + 100)
+                if rule["exclude"].search(content[ctx_start:ctx_end]):
                     continue
 
             # For API assignments, placeholder words only suppress the match
