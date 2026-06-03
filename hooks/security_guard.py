@@ -47,21 +47,63 @@ _RM_ROOT_TOKEN = re.compile(
     re.IGNORECASE,
 )
 
-# Shell command separators — split on these so a trailing `; cmd` (or && / || /
-# pipe / subshell) can't shield the destructive rm from inspection.
-_SHELL_SEPARATORS = re.compile(r"&&|\|\||[;&|\n()]")
+def _split_subcommands(command):
+    """Split a command line into sub-commands on UNQUOTED shell separators.
+
+    Quote-aware: a separator inside a quoted string (`printf 'a; rm -rf /'`) is
+    NOT treated as a new command, so quoted/example text isn't a false positive.
+    Heredoc bodies are not tracked — see _is_dangerous_rm's documented limits.
+    """
+    subs, buf, quote = [], [], None
+    for c in command:
+        if quote:
+            buf.append(c)
+            if c == quote:
+                quote = None
+        elif c in ("'", '"'):
+            quote = c
+            buf.append(c)
+        elif c in ";&|\n()":
+            subs.append("".join(buf))
+            buf = []
+        else:
+            buf.append(c)
+    subs.append("".join(buf))
+    return subs
+
+
+def _collapse_path(token):
+    """Resolve `.`/`..` components in a path-like target (best effort).
+
+    So `~/Downloads/../*` (which Bash expands to the home root) is seen as `~/*`.
+    Does not climb above a leading ~, ~user, $HOME or / anchor.
+    """
+    if "/" not in token:
+        return token
+    out = []
+    for part in token.split("/"):
+        if part == ".":
+            continue
+        if (part == ".." and out and out[-1] not in ("", "..")
+                and not out[-1].startswith(("~", "$"))):
+            out.pop()
+        else:
+            out.append(part)
+    return "/".join(out)
 
 
 def _normalize_rm_target(token):
     """Undo the common, literal shell wrappers around an rm target token.
 
-    Handles surrounding quotes (`"/"`), `${HOME}` brace syntax, and repeated
-    leading slashes (`//`). Deliberately does NOT resolve variables, command
-    substitution, or glob/brace expansion — see _is_dangerous_rm's docstring.
+    Handles surrounding quotes (`"/"`), `${HOME}` brace syntax, repeated leading
+    slashes (`//`), and `.`/`..` path components. Deliberately does NOT resolve
+    variables, command substitution, or glob/brace expansion — see
+    _is_dangerous_rm's docstring.
     """
     token = token.replace('"', "").replace("'", "")  # quotes are shell syntax, not path
     token = token.replace("${HOME}", "$HOME")
     token = re.sub(r"^/{2,}", "/", token)
+    token = _collapse_path(token)
     return token
 
 
@@ -72,23 +114,25 @@ def _is_rm_word(word):
 
 
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
-# Command launchers that may precede the real rm (e.g. `sudo rm`, `env FOO=b rm`).
-_RM_WRAPPERS = ("sudo", "doas", "env", "nice", "nohup", "command", "exec")
+# Launchers (`sudo rm`, `time rm`) and shell reserved words / group openers
+# (`if x; then rm ...`, `{ rm ...`) that can precede the real rm in one segment.
+_RM_WRAPPERS = ("sudo", "doas", "env", "nice", "nohup", "command", "exec", "time")
+_RM_PREFIX_KEYWORDS = ("then", "do", "else", "elif", "{")
 
 
 def _rm_invocation_index(words):
     """Index of an rm in COMMAND position (else None).
 
-    rm only counts when it is first, or follows known launchers / `VAR=val`
-    assignments — so `echo rm -rf /` (rm in argument position) is not treated as
-    a delete, while `sudo rm` / `env FOO=b rm` still are.
+    rm only counts when it is first, or follows known launchers / reserved words /
+    `VAR=val` assignments — so `echo rm -rf /` (rm in argument position) is not
+    treated as a delete, while `sudo rm`, `time rm`, and `if x; then rm` are.
     """
     i = 0
     while i < len(words):
         w = words[i]
         if _is_rm_word(w):
             return i
-        if w in _RM_WRAPPERS or _ENV_ASSIGNMENT.match(w):
+        if w in _RM_WRAPPERS or w in _RM_PREFIX_KEYWORDS or _ENV_ASSIGNMENT.match(w):
             i += 1
             continue
         return None
@@ -105,11 +149,11 @@ def _is_dangerous_rm(command):
     — forms that require evaluating the shell: variable indirection
     (`R=/; rm -rf $R`), command substitution / `bash -c "..."`, indirect deletes
     (`... | xargs rm -rf`, `find / -exec rm -rf {} \\;`), glob/brace expansion
-    that resolves to a root (`rm -rf /{etc,var}`, `/e?c`), and launcher-specific
-    options before the command (`sudo -u user rm ...`). Specific files and subdirs
-    under home are allowed; only roots are blocked.
+    that resolves to a root (`rm -rf /{etc,var}`, `/e?c`), launcher-specific
+    options before the command (`sudo -u user rm ...`), and heredoc bodies.
+    Specific files and subdirs under home are allowed; only roots are blocked.
     """
-    for sub in _SHELL_SEPARATORS.split(command):
+    for sub in _split_subcommands(command):
         words = sub.split()
         rm_at = _rm_invocation_index(words)
         if rm_at is None:

@@ -293,41 +293,53 @@ def _matched_line(content, index):
 def scan_content(content, file_path):
     """Scan content against all patterns. Returns (rule_name, message, should_block) or (None, None, False)."""
     for rule in PATTERNS:
-        # Iterate EVERY match, not just the first: a suppressed first match (via
-        # allowlist / exclude / value_exclude) must not skip the whole rule, or a
+        pattern = rule["pattern"]
+        exclude = rule.get("exclude")
+        value_exclude = rule.get("value_exclude")
+        validate = rule.get("validate")
+        # Search EVERY match, not just the first: a suppressed match (allowlist /
+        # exclude / value_exclude / validate) must not skip the whole rule, or a
         # later real secret of the same type would bypass the scanner.
-        for match in rule["pattern"].finditer(content):
+        pos = 0
+        while True:
+            match = pattern.search(content, pos)
+            if match is None:
+                break
+            # By default skip past this match; a *validate* failure instead retries
+            # OVERLAPPING, because a real candidate can start inside a greedy match
+            # that failed validation (e.g. a seed phrase preceded by junk words).
+            next_pos = match.end()
+            suppressed = True
+
             # Explicit per-line allowlist: a `seal-allow-secret` marker on the
             # matched line suppresses THIS match (for known-fake test fixtures).
             if ALLOWLIST_MARKER in _matched_line(content, match.start()):
-                continue
+                pass
             # Exclude check: a +-100 char window of context. This intentionally
             # crosses line boundaries so a label on the line above (sha256:\n<hex>)
-            # still suppresses a checksum/lockfile false positive. It is best
-            # effort, not a security boundary — for guaranteed allowlisting use the
-            # explicit `seal-allow-secret` marker (which is line-bound).
-            if rule.get("exclude"):
-                ctx_start = max(0, match.start() - 100)
-                ctx_end = min(len(content), match.end() + 100)
-                if rule["exclude"].search(content[ctx_start:ctx_end]):
-                    continue
+            # still suppresses a checksum/lockfile false positive. Best effort, not
+            # a security boundary — use the line-bound `seal-allow-secret` marker
+            # for guaranteed allowlisting.
+            elif exclude and exclude.search(
+                content[max(0, match.start() - 100):min(len(content), match.end() + 100)]
+            ):
+                pass
+            # For API assignments, placeholder words only suppress the match when
+            # the complete quoted value is a placeholder form.
+            elif value_exclude and value_exclude.fullmatch(
+                match.groupdict().get("quoted_value") or match.group(0)
+            ):
+                pass
+            # Semantic validation (e.g. confirm a candidate mnemonic is really BIP39
+            # words); on failure, retry overlapping for a real candidate inside it.
+            elif validate and not validate(match.group(0)):
+                next_pos = match.start() + 1
+            else:
+                suppressed = False
 
-            # For API assignments, placeholder words only suppress the match
-            # when the complete quoted value is a placeholder form.
-            if rule.get("value_exclude"):
-                quoted_value = match.groupdict().get("quoted_value")
-                target = quoted_value if quoted_value is not None else match.group(0)
-                if rule["value_exclude"].fullmatch(target):
-                    continue
-
-            # Optional semantic validation of the matched text (e.g. confirm a
-            # candidate mnemonic is actually BIP39 words). A failed check means
-            # this match is not a finding — keep scanning for a real one.
-            validate = rule.get("validate")
-            if validate and not validate(match.group(0)):
-                continue
-
-            return rule["name"], rule["message"], rule["block"]
+            if not suppressed:
+                return rule["name"], rule["message"], rule["block"]
+            pos = next_pos if next_pos > pos else pos + 1
 
     return None, None, False
 

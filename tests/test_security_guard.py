@@ -27,6 +27,9 @@ from security_guard import check_command, main
         'rm -rf "$HOME/Downloads"',     # quoted specific subdir under home (not a root)
         "echo rm -rf /etc",             # rm in argument position, not the command
         "rm -- -rf /etc",               # -rf is an operand after --, not a flag
+        "rm -rf ~/foo/../bar",          # .. resolves to a specific subdir, not a root
+        "printf 'x; rm -rf /'",         # separator is inside a quoted string
+        "echo 'a && rm -rf /'",         # quoted example text, not an executed delete
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -67,6 +70,9 @@ def test_check_command_allows_safe_commands(command):
         ("rm -r -f /etc", "rm_rf_dangerous"),               # split short flags
         ("rm --recursive --force /etc", "rm_rf_dangerous"),  # long flags
         ("rm --rec --force /etc", "rm_rf_dangerous"),        # abbreviated long flag (GNU)
+        ("rm -rf ~/Downloads/../*", "rm_rf_dangerous"),      # .. traversal resolves to home root
+        ("time rm -rf /", "rm_rf_dangerous"),                # time launcher before rm
+        ("if true; then rm -rf /", "rm_rf_dangerous"),       # shell keyword (then) before rm
         ("rm -rf -- /etc", "rm_rf_dangerous"),              # -- end-of-options marker
         ("rm -rf $HOME/*", "rm_rf_dangerous"),              # $HOME glob
         ('rm -rf "/"', "rm_rf_dangerous"),                  # quoted root

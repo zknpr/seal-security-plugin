@@ -263,6 +263,18 @@ def test_load_bip39_words_fails_safe_on_malformed_asset(monkeypatch):
     assert secret_scanner._load_bip39_words() == frozenset()
 
 
+def test_scan_content_finds_seed_after_junk_words():
+    # A real seed preceded by many non-BIP39 short words must still be found: the
+    # greedy regex match that fails BIP39 validation retries OVERLAPPING.
+    seed = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    content = ("foobar " * 13) + seed
+    rule_name, _, _ = scan_content(content, "/repo/notes.txt")
+    assert rule_name == "mnemonic_phrase"
+
+
 def test_scan_content_allowlist_does_not_absorb_next_line_seed():
     # The phrase pattern is single-line ([ \t]+), so an allowlisted line can't be
     # merged with a real seed on the NEXT line into one suppressed match. (Line 1
