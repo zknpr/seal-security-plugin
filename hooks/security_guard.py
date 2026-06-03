@@ -71,6 +71,30 @@ def _is_rm_word(word):
     return word == "rm" or word.endswith("/rm")
 
 
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+# Command launchers that may precede the real rm (e.g. `sudo rm`, `env FOO=b rm`).
+_RM_WRAPPERS = ("sudo", "doas", "env", "nice", "nohup", "command", "exec")
+
+
+def _rm_invocation_index(words):
+    """Index of an rm in COMMAND position (else None).
+
+    rm only counts when it is first, or follows known launchers / `VAR=val`
+    assignments — so `echo rm -rf /` (rm in argument position) is not treated as
+    a delete, while `sudo rm` / `env FOO=b rm` still are.
+    """
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _is_rm_word(w):
+            return i
+        if w in _RM_WRAPPERS or _ENV_ASSIGNMENT.match(w):
+            i += 1
+            continue
+        return None
+    return None
+
+
 def _is_dangerous_rm(command):
     """True if `command` recursively force-deletes a filesystem/home root.
 
@@ -86,18 +110,18 @@ def _is_dangerous_rm(command):
     """
     for sub in _SHELL_SEPARATORS.split(command):
         words = sub.split()
-        rm_at = next((i for i, w in enumerate(words) if _is_rm_word(w)), None)
+        rm_at = _rm_invocation_index(words)
         if rm_at is None:
             continue
-        recursive = force = False
+        recursive = force = options_ended = False
         targets = []
         for w in words[rm_at + 1:]:
-            if w == "--":
-                continue  # end-of-options marker
-            if w.startswith("--"):
+            if not options_ended and w == "--":
+                options_ended = True  # everything after `--` is an operand
+            elif not options_ended and w.startswith("--"):
                 recursive |= w == "--recursive"
                 force |= w == "--force"
-            elif w.startswith("-") and len(w) > 1:
+            elif not options_ended and w.startswith("-") and len(w) > 1:
                 recursive |= "r" in w or "R" in w
                 force |= "f" in w
             else:

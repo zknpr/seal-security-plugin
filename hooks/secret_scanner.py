@@ -59,9 +59,16 @@ def _load_bip39_words():
     try:
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bip39_english.txt")
         with open(path, "r", encoding="utf-8") as f:
-            return frozenset(line.strip() for line in f if line.strip())
+            words = frozenset(line.strip() for line in f if line.strip())
     except OSError:
         return frozenset()
+    # Fail safe: a truncated/garbled asset must not silently weaken detection.
+    # The BIP39 English list is exactly 2048 words; if it isn't (or is the wrong
+    # list), treat the wordlist as unavailable so _looks_like_seed_phrase accepts
+    # every structural candidate rather than under-matching.
+    if len(words) != 2048 or "abandon" not in words:
+        return frozenset()
+    return words
 
 
 BIP39_WORDS = _load_bip39_words()
@@ -141,7 +148,7 @@ PATTERNS = [
     # --- AWS Secret Key pattern ---
     {
         "name": "aws_secret",
-        "pattern": re.compile(r"(?i)(aws_secret_access_key|aws_secret)[ \t]*[=:][ \t]*['\"]?[A-Za-z0-9/+=]{40}"),
+        "pattern": re.compile(r"(?i)(aws_secret_access_key|aws_secret)\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}"),
         "exclude": None,
         "message": (
             "[SEAL] BLOCKED: AWS Secret Access Key detected.\n"
@@ -156,7 +163,7 @@ PATTERNS = [
         "name": "api_key_assignment",
         "pattern": re.compile(
             r"(?i)(api[_-]?key|api[_-]?secret|api[_-]?token|auth[_-]?token|access[_-]?token"
-            r"|secret[_-]?key|client[_-]?secret)[ \t]*[=:][ \t]*['\"]"
+            r"|secret[_-]?key|client[_-]?secret)\s*[=:]\s*['\"]"
             r"(?P<quoted_value>[A-Za-z0-9_\-\.]{20,})['\"]"
         ),
         "exclude": re.compile(
@@ -294,17 +301,14 @@ def scan_content(content, file_path):
             # matched line suppresses THIS match (for known-fake test fixtures).
             if ALLOWLIST_MARKER in _matched_line(content, match.start()):
                 continue
-            # Check the exclude pattern in a +-100 char window, but CLAMPED to the
-            # match's own line(s): a window that crossed newlines would let an
-            # exclude word on an adjacent line (`# test fixture\n<real secret>`)
-            # suppress the finding.
+            # Exclude check: a +-100 char window of context. This intentionally
+            # crosses line boundaries so a label on the line above (sha256:\n<hex>)
+            # still suppresses a checksum/lockfile false positive. It is best
+            # effort, not a security boundary — for guaranteed allowlisting use the
+            # explicit `seal-allow-secret` marker (which is line-bound).
             if rule.get("exclude"):
-                line_start = content.rfind("\n", 0, match.start()) + 1
-                line_end = content.find("\n", match.end())
-                if line_end == -1:
-                    line_end = len(content)
-                ctx_start = max(line_start, match.start() - 100)
-                ctx_end = min(line_end, match.end() + 100)
+                ctx_start = max(0, match.start() - 100)
+                ctx_end = min(len(content), match.end() + 100)
                 if rule["exclude"].search(content[ctx_start:ctx_end]):
                     continue
 

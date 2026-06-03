@@ -249,27 +249,30 @@ def test_looks_like_seed_phrase_fails_safe_without_wordlist(monkeypatch):
     assert secret_scanner._looks_like_seed_phrase("any unknown words at all here now") is True
 
 
-def test_scan_content_exclude_stays_on_match_line():
-    # An exclude word on an ADJACENT line must not suppress a real seed on the
-    # next line — the exclude window is clamped to the match's own line.
-    phrase = " ".join([
-        "abandon", "ability", "able", "about", "above", "absent",
-        "absorb", "abstract", "absurd", "abuse", "access", "accident",
-    ])
-    content = "# test fixture nearby\n" + phrase
-    rule_name, _, block = scan_content(content, "/repo/wallet.txt")
-    assert rule_name == "mnemonic_phrase"
-    assert block is True
+def test_load_bip39_words_loads_full_official_list():
+    words = secret_scanner._load_bip39_words()
+    assert len(words) == 2048
+    assert "abandon" in words and "zoo" in words
+
+
+def test_load_bip39_words_fails_safe_on_malformed_asset(monkeypatch):
+    # A truncated/garbled wordlist must fail safe (return empty -> accept all),
+    # never silently weaken detection with a partial set.
+    import io
+    monkeypatch.setattr("builtins.open", lambda *a, **k: io.StringIO("only\na\nfew\nwords\n"))
+    assert secret_scanner._load_bip39_words() == frozenset()
 
 
 def test_scan_content_allowlist_does_not_absorb_next_line_seed():
-    # An allowlisted fixture line must not let a real seed on the NEXT line be
-    # swallowed into one suppressed (cross-line) match.
+    # The phrase pattern is single-line ([ \t]+), so an allowlisted line can't be
+    # merged with a real seed on the NEXT line into one suppressed match. (Line 1
+    # uses a non-exclude word so the cross-line exclude window doesn't suppress
+    # line 2 — that path is covered separately.)
     phrase = " ".join([
         "abandon", "ability", "able", "about", "above", "absent",
         "absorb", "abstract", "absurd", "abuse", "access", "accident",
     ])
-    content = "fixture = " + phrase + "  # seal-allow-secret\nreal = " + phrase
+    content = "wallet1 = " + phrase + "  # seal-allow-secret\nwallet2 = " + phrase
     rule_name, _, _ = scan_content(content, "/repo/x.txt")
     assert rule_name == "mnemonic_phrase"
 

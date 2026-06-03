@@ -25,6 +25,8 @@ from security_guard import check_command, main
         "rm -rf /variable",             # not /var
         "rm -rf ~/Downloads/*",         # glob in a specific subdir, not a home root
         'rm -rf "$HOME/Downloads"',     # quoted specific subdir under home (not a root)
+        "echo rm -rf /etc",             # rm in argument position, not the command
+        "rm -- -rf /etc",               # -rf is an operand after --, not a flag
         "echo $SPECIFIC_VAR",
     ],
 )
