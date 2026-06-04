@@ -200,10 +200,16 @@ def _is_rm_word(word):
 
 
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
-# Launchers (`sudo rm`, `time rm`) and shell reserved words / group openers
-# (`if x; then rm ...`, `{ rm ...`) that can precede the real rm in one segment.
-_RM_WRAPPERS = ("sudo", "doas", "env", "nice", "nohup", "command", "exec", "time")
-_RM_PREFIX_KEYWORDS = ("then", "do", "else", "elif", "{")
+# Launchers (`sudo rm`, `time rm`, `eval rm ...`) that can precede the real rm in
+# one segment. `eval` only transparently covers its UNQUOTED form (`eval rm -rf
+# /etc`); `eval "<string>"` re-parses a quoted string and stays a documented miss.
+_RM_WRAPPERS = ("sudo", "doas", "env", "nice", "nohup", "command", "exec", "time", "eval")
+# Shell reserved words / group openers that precede a command in the same segment:
+# leading compound-command keywords (`if rm ...; then`, `while rm ...; do`,
+# `until rm ...; do`) run their COMMANDS list before the construct resolves, the
+# body keywords continue it, `{` opens a group, and `!` negates the next command's
+# exit status — in every case the rm still executes.
+_RM_PREFIX_KEYWORDS = ("if", "while", "until", "then", "do", "else", "elif", "{", "!")
 
 
 def _rm_invocation_index(words):
@@ -233,7 +239,8 @@ def _is_dangerous_rm(command):
     separators, brace/split/long flags, `--`, quoted or `${HOME}` targets, and
     repeated slashes don't hide the target. It CANNOT see through — and will miss
     — forms that require evaluating the shell: variable indirection
-    (`R=/; rm -rf $R`), command substitution / `bash -c "..."`, indirect deletes
+    (`R=/; rm -rf $R`), command substitution, `bash -c "..."` / `eval "..."`
+    string re-evaluation, indirect deletes
     (`... | xargs rm -rf`, `find / -exec rm -rf {} \\;`), glob/brace expansion
     that resolves to a root (`rm -rf /{etc,var}`, `/e?c`), launcher-specific
     options before the command (`sudo -u user rm ...`), and heredoc bodies.

