@@ -38,12 +38,64 @@ STATE_PREFIX = "seal_scanner_state"
 # "pragma: allowlist secret" / gitleaks' "gitleaks:allow".
 ALLOWLIST_MARKER = "seal-allow-secret"
 
-# BIP39 wordlist subset — first and last words from the official list
-# used to detect likely mnemonic phrases (12+ dictionary words in sequence)
-# We check for sequences of 12+ lowercase alpha words as a heuristic.
+# Mnemonic detection is two-stage: a cheap structural regex finds candidate runs
+# of 12-24 short lowercase words, then we confirm the words are actually BIP39
+# wordlist entries — otherwise ordinary prose ("the quick brown fox ...") trips it.
+# Whitespace between words is space/tab only ([ \t], NOT newlines or exotic
+# Unicode line separators like U+2028): a seed phrase is a single line, and
+# letting the match span lines would let an allowlisted line absorb a real phrase
+# on the next line (per-match suppression inspects only the match-start line).
 MNEMONIC_PATTERN = re.compile(
-    r"\b([a-z]{3,8}\s+){11,23}[a-z]{3,8}\b"
+    r"\b([a-z]{3,8}[ \t]+){11,23}[a-z]{3,8}\b"
 )
+
+
+def _load_bip39_words():
+    """Load the official 2048-word BIP39 English wordlist for mnemonic validation.
+
+    Returns a frozenset, or an empty set if the vendored file is unavailable — in
+    which case mnemonic detection falls back to the structural regex alone.
+    """
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bip39_english.txt")
+        with open(path, "r", encoding="utf-8") as f:
+            words = frozenset(line.strip() for line in f if line.strip())
+    except (OSError, UnicodeError):
+        # Never crash the import: a missing/unreadable file is OSError, but a
+        # corrupt asset with invalid UTF-8 raises UnicodeDecodeError while
+        # iterating lines. Both fail safe to an empty set (structural fallback).
+        return frozenset()
+    # Fail safe: a truncated/garbled asset must not silently weaken detection.
+    # The BIP39 English list is exactly 2048 words; if it isn't (or is the wrong
+    # list), treat the wordlist as unavailable so _looks_like_seed_phrase accepts
+    # every structural candidate rather than under-matching.
+    if len(words) != 2048 or "abandon" not in words:
+        return frozenset()
+    return words
+
+
+BIP39_WORDS = _load_bip39_words()
+
+
+def _looks_like_seed_phrase(text):
+    """True if `text` has >= 12 consecutive BIP39 words (i.e. a real seed phrase).
+
+    A run of short lowercase words is only a mnemonic if the words are actually
+    from the BIP39 list, so this filters out prose / identifier lists that the
+    structural regex would otherwise flag. If the wordlist couldn't be loaded we
+    accept the structural match (fail safe — better a false positive than a miss).
+    """
+    if not BIP39_WORDS:
+        return True
+    run = 0
+    for word in text.split():
+        if word in BIP39_WORDS:
+            run += 1
+            if run >= 12:
+                return True
+        else:
+            run = 0
+    return False
 
 # Pattern definitions: (name, regex, message, block?)
 PATTERNS = [
@@ -74,6 +126,8 @@ PATTERNS = [
             r"(test|example|sample|fixture|mock|lorem|ipsum|the\s+quick\s+brown)",
             re.IGNORECASE,
         ),
+        # Confirm the candidate is actually BIP39 words, not just any short-word run.
+        "validate": _looks_like_seed_phrase,
         "message": (
             "[SEAL] BLOCKED: Potential mnemonic seed phrase detected (12+ word sequence).\n"
             "NEVER store seed phrases in code or config files.\n"
@@ -242,30 +296,53 @@ def _matched_line(content, index):
 def scan_content(content, file_path):
     """Scan content against all patterns. Returns (rule_name, message, should_block) or (None, None, False)."""
     for rule in PATTERNS:
-        match = rule["pattern"].search(content)
-        if match:
+        pattern = rule["pattern"]
+        exclude = rule.get("exclude")
+        value_exclude = rule.get("value_exclude")
+        validate = rule.get("validate")
+        # Search EVERY match, not just the first: a suppressed match (allowlist /
+        # exclude / value_exclude / validate) must not skip the whole rule, or a
+        # later real secret of the same type would bypass the scanner.
+        pos = 0
+        while True:
+            match = pattern.search(content, pos)
+            if match is None:
+                break
+            # By default skip past this match; a *validate* failure instead retries
+            # OVERLAPPING, because a real candidate can start inside a greedy match
+            # that failed validation (e.g. a seed phrase preceded by junk words).
+            next_pos = match.end()
+            suppressed = True
+
             # Explicit per-line allowlist: a `seal-allow-secret` marker on the
-            # matched line suppresses the finding (for known-fake test fixtures).
+            # matched line suppresses THIS match (for known-fake test fixtures).
             if ALLOWLIST_MARKER in _matched_line(content, match.start()):
-                continue
-            # Check exclude pattern — if the surrounding context matches, skip this rule
-            if rule.get("exclude"):
-                # Check in the matched line and nearby context
-                match_start = max(0, match.start() - 100)
-                match_end = min(len(content), match.end() + 100)
-                context = content[match_start:match_end]
-                if rule["exclude"].search(context):
-                    continue
+                pass
+            # Exclude check: a +-100 char window of context. This intentionally
+            # crosses line boundaries so a label on the line above (sha256:\n<hex>)
+            # still suppresses a checksum/lockfile false positive. Best effort, not
+            # a security boundary — use the line-bound `seal-allow-secret` marker
+            # for guaranteed allowlisting.
+            elif exclude and exclude.search(
+                content[max(0, match.start() - 100):min(len(content), match.end() + 100)]
+            ):
+                pass
+            # For API assignments, placeholder words only suppress the match when
+            # the complete quoted value is a placeholder form.
+            elif value_exclude and value_exclude.fullmatch(
+                match.groupdict().get("quoted_value") or match.group(0)
+            ):
+                pass
+            # Semantic validation (e.g. confirm a candidate mnemonic is really BIP39
+            # words); on failure, retry overlapping for a real candidate inside it.
+            elif validate and not validate(match.group(0)):
+                next_pos = match.start() + 1
+            else:
+                suppressed = False
 
-            # For API assignments, placeholder words only suppress the match
-            # when the complete quoted value is a placeholder form.
-            if rule.get("value_exclude"):
-                quoted_value = match.groupdict().get("quoted_value")
-                target = quoted_value if quoted_value is not None else match.group(0)
-                if rule["value_exclude"].fullmatch(target):
-                    continue
-
-            return rule["name"], rule["message"], rule["block"]
+            if not suppressed:
+                return rule["name"], rule["message"], rule["block"]
+            pos = next_pos if next_pos > pos else pos + 1
 
     return None, None, False
 

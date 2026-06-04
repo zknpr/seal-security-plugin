@@ -30,10 +30,257 @@ STATE_PREFIX = "seal_guard_state"
 # so we don't nag repeatedly for the same pattern in one session
 
 
-# Each rule: name, compiled pattern, message, and an explicit `block` flag.
+# A single (already separator-free) target token that names a filesystem or HOME
+# root. Specific files/subdirs (~/Downloads, /tmp, ~/.config, $HOME/file) are NOT
+# roots and are intentionally allowed; home/filesystem/system roots are blocked.
+_RM_ROOT_TOKEN = re.compile(
+    r"^(?:"
+    r"/\*?$"                                          # the filesystem root: "/" or "/*"
+    r"|/(?:usr|etc|var|home|System|root)(?![\w.-])"   # a system dir (then /, brace, glob, EOL ...)
+    r"|~[\w]*/?$"                                      # "~", "~user", "~/"
+    r"|~[\w]*/\*"                                      # "~/*"
+    r"|~[\w]*/[^/]*[*?]"                               # first-segment home glob: ~/.* ~/.??* ~/foo*
+    r"|\$HOME/?$"                                      # "$HOME", "$HOME/"
+    r"|\$HOME/\*"                                      # "$HOME/*"
+    r"|\$HOME/[^/]*[*?]"                               # "$HOME/<glob>"
+    r")",
+    re.IGNORECASE,
+)
+
+def _split_subcommands(command):
+    """Split a command line into sub-commands on UNQUOTED shell separators.
+
+    Quote-aware: a separator inside a quoted string (`printf 'a; rm -rf /'`) is
+    NOT treated as a new command, so quoted/example text isn't a false positive.
+    Backslash escapes are tracked when unquoted and inside double quotes, so an
+    escaped quote (`printf "x \\"; rm -rf /"`) does not prematurely close the
+    string and split harmless text into a fake `rm` subcommand. Single quotes are
+    literal in the shell (no escapes inside them). Heredoc bodies are not tracked
+    — see _is_dangerous_rm's documented limits.
+    """
+    subs, buf, quote = [], [], None
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            buf.append(c)
+            if c == "'":
+                quote = None
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                buf.append(c)
+                buf.append(command[i + 1])  # keep escaped char; an escaped " stays open
+                i += 2
+                continue
+            buf.append(c)
+            if c == '"':
+                quote = None
+        elif c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(command[i + 1])       # escaped separator/quote is literal text
+            i += 2
+            continue
+        elif c in ("'", '"'):
+            quote = c
+            buf.append(c)
+        elif c in ";&|\n()":
+            subs.append("".join(buf))
+            buf = []
+        else:
+            buf.append(c)
+        i += 1
+    subs.append("".join(buf))
+    return subs
+
+
+def _collapse_path(token):
+    """Resolve `.`/`..` components in a path-like target (best effort).
+
+    `~/Downloads/../*` (which Bash expands to the home root) is seen as `~/*`.
+    Climbing back to a root keeps the root anchor rather than collapsing to an
+    unmatched empty/`~/..` form: an absolute path that walks back to `/`
+    (`/etc/..`, `/usr/../..`) stays `/`, and climbing ABOVE a leading ~, ~user or
+    $HOME anchor (`~/../*`, `~/.cache/../../*`, `~/..`) escapes home to its parent
+    (`/home`, or `/` for root) — still a destructive root — and re-anchors to `/`.
+    Cannot climb above an absolute `/`.
+    """
+    if "/" not in token:
+        return token
+    out = []
+    escaped_root = False
+    for part in token.split("/"):
+        if part == ".":
+            continue
+        if part == "..":
+            if out and out[-1] not in ("", "..") and not out[-1].startswith(("~", "$")):
+                out.pop()                       # pop a normal component
+            elif out and out[-1].startswith(("~", "$")):
+                out.pop()                       # climbing above home escapes to a root
+                escaped_root = True
+            # else: at/above an absolute root or stacked `..` — cannot climb higher
+            continue
+        out.append(part)
+    rest = [p for p in out if p]                       # drop empty segments
+    if escaped_root or token.startswith("/"):
+        # An absolute path, or a climb that escaped a home anchor, anchors at the
+        # filesystem root. Collapsing back to the root must stay "/" (not "") so
+        # _RM_ROOT_TOKEN still matches: /etc/.. -> /, /usr/../.. -> /, ~/../* ->
+        # /*, ~/.. -> /.
+        return "/" + "/".join(rest)
+    return "/".join(out)
+
+
+def _normalize_rm_target(token):
+    """Undo the common, literal shell wrappers around an rm target token.
+
+    Handles surrounding quotes (`"/"`), `${HOME}` brace syntax, repeated leading
+    slashes (`//`), and `.`/`..` path components. Deliberately does NOT resolve
+    variables, command substitution, or glob/brace expansion — see
+    _is_dangerous_rm's docstring.
+    """
+    token = token.replace('"', "").replace("'", "")  # quotes are shell syntax, not path
+    token = token.replace("${HOME}", "$HOME")
+    token = re.sub(r"^/{2,}", "/", token)
+    token = _collapse_path(token)
+    return token
+
+
+def _shell_split(segment):
+    """Split one sub-command into shell WORDS on unquoted whitespace.
+
+    Quote- and escape-aware, and performs quote removal, so `FOO="a b" rm -rf /etc`
+    tokenizes to ['FOO=a b', 'rm', '-rf', '/etc'] — the assignment stays one word
+    and the following rm is still seen in command position — instead of
+    str.split()'s ['FOO="a', 'b"', 'rm', ...], which hid the rm. Quoted targets
+    keep their spaces and lose their quotes, mirroring how the shell builds argv.
+    Not a full shell parser (no variable/glob expansion).
+    """
+    words, buf, quote, had = [], [], None, False
+    i, n = 0, len(segment)
+    while i < n:
+        c = segment[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            else:
+                buf.append(c)
+        elif quote == '"':
+            # Inside double quotes Bash only treats \ as an escape before " \ $ `.
+            if c == "\\" and i + 1 < n and segment[i + 1] in ('"', "\\", "$", "`"):
+                buf.append(segment[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+            else:
+                buf.append(c)
+        elif c == "\\" and i + 1 < n:
+            buf.append(segment[i + 1])            # unquoted escape -> literal next char
+            i += 2
+            continue
+        elif c in ("'", '"'):
+            quote = c
+            had = True                            # an (even empty) quoted section is a word
+        elif c.isspace():
+            if had or buf:
+                words.append("".join(buf))
+                buf, had = [], False
+        else:
+            buf.append(c)
+        i += 1
+    if had or buf:
+        words.append("".join(buf))
+    return words
+
+
+def _is_rm_word(word):
+    """True if `word` invokes rm: rm, /bin/rm, or a backslash-escaped \\rm."""
+    word = word.lstrip("\\")
+    return word == "rm" or word.endswith("/rm")
+
+
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+# Launchers (`sudo rm`, `time rm`, `eval rm ...`) that can precede the real rm in
+# one segment. `eval` only transparently covers its UNQUOTED form (`eval rm -rf
+# /etc`); `eval "<string>"` re-parses a quoted string and stays a documented miss.
+_RM_WRAPPERS = ("sudo", "doas", "env", "nice", "nohup", "command", "exec", "time", "eval")
+# Shell reserved words / group openers that precede a command in the same segment:
+# leading compound-command keywords (`if rm ...; then`, `while rm ...; do`,
+# `until rm ...; do`) run their COMMANDS list before the construct resolves, the
+# body keywords continue it, `{` opens a group, and `!` negates the next command's
+# exit status — in every case the rm still executes.
+_RM_PREFIX_KEYWORDS = ("if", "while", "until", "then", "do", "else", "elif", "{", "!")
+
+
+def _rm_invocation_index(words):
+    """Index of an rm in COMMAND position (else None).
+
+    rm only counts when it is first, or follows known launchers / reserved words /
+    `VAR=val` assignments — so `echo rm -rf /` (rm in argument position) is not
+    treated as a delete, while `sudo rm`, `time rm`, and `if x; then rm` are.
+    """
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _is_rm_word(w):
+            return i
+        if w in _RM_WRAPPERS or w in _RM_PREFIX_KEYWORDS or _ENV_ASSIGNMENT.match(w):
+            i += 1
+            continue
+        return None
+    return None
+
+
+def _is_dangerous_rm(command):
+    """True if `command` recursively force-deletes a filesystem/home root.
+
+    A HEURISTIC for catching common and accidental destructive deletes, NOT a
+    security boundary. It parses each sub-command's flags and targets, so shell
+    separators, brace/split/long flags, `--`, quoted or `${HOME}` targets, and
+    repeated slashes don't hide the target. It CANNOT see through — and will miss
+    — forms that require evaluating the shell: variable indirection
+    (`R=/; rm -rf $R`), command substitution, `bash -c "..."` / `eval "..."`
+    string re-evaluation, indirect deletes
+    (`... | xargs rm -rf`, `find / -exec rm -rf {} \\;`), glob/brace expansion
+    that resolves to a root (`rm -rf /{etc,var}`, `/e?c`), launcher-specific
+    options before the command (`sudo -u user rm ...`), and heredoc bodies.
+    Specific files and subdirs under home are allowed; only roots are blocked.
+    """
+    for sub in _split_subcommands(command):
+        words = _shell_split(sub)
+        rm_at = _rm_invocation_index(words)
+        if rm_at is None:
+            continue
+        recursive = force = options_ended = False
+        targets = []
+        for w in words[rm_at + 1:]:
+            if not options_ended and w == "--":
+                options_ended = True  # everything after `--` is an operand
+            elif not options_ended and w.startswith("--") and len(w) > 2:
+                # GNU rm accepts unambiguous abbreviations (--rec == --recursive),
+                # but --recursive/--force take NO value: --force=no and --=x are
+                # option errors that abort before deleting, so they must not set
+                # the flags (an empty prefix would otherwise match every option).
+                opt = w[2:]
+                if opt and "=" not in opt:
+                    recursive |= "recursive".startswith(opt)
+                    force |= "force".startswith(opt)
+            elif not options_ended and w.startswith("-") and len(w) > 1:
+                recursive |= "r" in w or "R" in w
+                force |= "f" in w
+            else:
+                targets.append(_normalize_rm_target(w))
+        if recursive and force and any(_RM_ROOT_TOKEN.match(t) for t in targets):
+            return True
+    return False
+
+
+# Each rule: name, a compiled `pattern` (or a `check` callable for non-regex
+# logic), message, and an explicit `block` flag.
 # block=True -> exit 2 (hard block); omitted/False -> exit 0 (warn-only).
 # Enforcement reads this flag, never the message text, so re-wording a message
-# can't change the security boundary. Rules are checked in order; first match wins.
+# can't change the security boundary. Rules are checked in order; a BLOCK match
+# wins immediately, otherwise the first WARNING is returned (see check_command).
 
 RULES = [
     # --- Pipe-to-shell: remote code execution ---
@@ -162,17 +409,10 @@ RULES = [
     {
         "name": "rm_rf_dangerous",
         "block": True,
-        "pattern": re.compile(
-            # rm with a force/recursive flag, targeting a filesystem or HOME root.
-            # The target must be a *root* (followed by space, end-of-string, or a
-            # glob), so a specific path like `rm -f ~/.claude/state.json` is not
-            # flagged, while bare `rm -rf /` (no trailing space) and `rm -rf ~/*`
-            # are. ~user matches a home root; ~/sub or /usr/local still match the
-            # /usr-style entries below.
-            r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*-rf\s+|.*-fr\s+)"
-            r"(/(?:\s|$)|/\*|~[\w]*/?(?:\s|$|\*)|/usr|/etc|/var|/home|/System|\$HOME/?(?:\s|$)|/root)",
-            re.IGNORECASE,
-        ),
+        # Parsed rather than regex-matched (see _is_dangerous_rm) so shell
+        # separators, brace expansion, split/long flags and `--` can't hide the
+        # target, while specific files/subdirs under home stay allowed.
+        "check": _is_dangerous_rm,
         "message": (
             "[SEAL] BLOCKED: rm -rf targeting system/home directory.\n"
             "This could cause catastrophic data loss. Double-check the target path.\n"
@@ -248,14 +488,26 @@ RULES = [
 def check_command(command):
     """Check a Bash command against the rules.
 
-    Returns (rule_name, message, block) on the first match, else (None, None, False).
-    `block` is the rule's explicit enforcement flag (default False = warn-only);
-    enforcement never depends on the message wording.
+    Returns (rule_name, message, block), else (None, None, False). A BLOCK rule
+    always wins over a WARNING rule, so e.g. `sudo rm -rf /` (which also matches
+    the sudo *warning*) is still hard-blocked rather than merely warned. `block`
+    is the rule's explicit flag (default False); enforcement never depends on the
+    message wording.
     """
+    if not isinstance(command, str):
+        return None, None, False  # never-crash: only string commands are scannable
+    warning = None
     for rule in RULES:
-        if rule["pattern"].search(command):
-            return rule["name"], rule["message"], rule.get("block", False)
-    return None, None, False
+        check = rule.get("check")
+        pattern = rule.get("pattern")
+        matched = check(command) if check else (pattern.search(command) if pattern else None)
+        if not matched:
+            continue
+        if rule.get("block", False):
+            return rule["name"], rule["message"], True  # a block beats any pending warning
+        if warning is None:
+            warning = (rule["name"], rule["message"], False)
+    return warning if warning is not None else (None, None, False)
 
 
 def main():
@@ -271,7 +523,8 @@ def main():
         sys.exit(0)
 
     command = tool_input.get("command", "")
-    if not command:
+    # A non-string command (list/number/null) must not crash the hook downstream.
+    if not isinstance(command, str) or not command:
         sys.exit(0)
 
     # Log the length, never the command text: a command may carry a pasted

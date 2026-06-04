@@ -5,7 +5,13 @@ from unittest.mock import patch
 import pytest
 
 import security_guard
-from security_guard import check_command, main
+from security_guard import (
+    _collapse_path,
+    _shell_split,
+    _split_subcommands,
+    check_command,
+    main,
+)
 
 
 @pytest.mark.parametrize(
@@ -20,6 +26,22 @@ from security_guard import check_command, main
         "rm -rf ./tmp",
         "rm -f ~/.claude/state.json",   # non-recursive, specific file under home
         "rm -rf ~/Downloads",           # recursive but a specific subdir, not a root
+        "rm -rf /usrs",                 # not /usr — substring must not match
+        "rm -rf /etcetera",             # not /etc
+        "rm -rf /variable",             # not /var
+        "rm -rf ~/Downloads/*",         # glob in a specific subdir, not a home root
+        'rm -rf "$HOME/Downloads"',     # quoted specific subdir under home (not a root)
+        "echo rm -rf /etc",             # rm in argument position, not the command
+        "rm -- -rf /etc",               # -rf is an operand after --, not a flag
+        "rm -rf ~/foo/../bar",          # .. resolves to a specific subdir, not a root
+        "rm -rf ~/../foo",              # climbs above home but to a specific named dir, not a root
+        "printf 'x; rm -rf /'",         # separator is inside a quoted string
+        "echo 'a && rm -rf /'",         # quoted example text, not an executed delete
+        'printf "x \\"; rm -rf /"',     # escaped quote keeps ; inside the string (not a real subcommand)
+        "rm --force=no -r /etc",        # --force takes no value: option error, no delete
+        "rm --=x /etc",                 # empty long-option name is an error, not -r/-f
+        "if true; then echo hi; fi",    # leading compound keywords, but no rm anywhere
+        "eval echo hi",                 # eval of a harmless command, not rm
         "echo $SPECIFIC_VAR",
     ],
 )
@@ -52,6 +74,38 @@ def test_check_command_allows_safe_commands(command):
         ("rm -rf /etc", "rm_rf_dangerous"),
         ("rm -fr ~", "rm_rf_dangerous"),
         ("rm -rf ~/*", "rm_rf_dangerous"),     # wipe everything under home
+        ("rm -rf ~/.*", "rm_rf_dangerous"),    # wipe hidden entries under home
+        ("rm -rf ~/.??*", "rm_rf_dangerous"),  # hidden-glob variant
+        ("rm -rf ~/Doc*", "rm_rf_dangerous"),  # home-root prefix glob (e.g. Documents/Desktop/Downloads)
+        ("rm -rf /etc; echo ok", "rm_rf_dangerous"),        # shell separator can't hide the target
+        ("rm -rf /etc{,bak}", "rm_rf_dangerous"),           # brace expansion
+        ("rm -r -f /etc", "rm_rf_dangerous"),               # split short flags
+        ("rm --recursive --force /etc", "rm_rf_dangerous"),  # long flags
+        ("rm --rec --force /etc", "rm_rf_dangerous"),        # abbreviated long flag (GNU)
+        ("rm -rf ~/Downloads/../*", "rm_rf_dangerous"),      # .. traversal resolves to home root
+        ("time rm -rf /", "rm_rf_dangerous"),                # time launcher before rm
+        ("if true; then rm -rf /", "rm_rf_dangerous"),       # shell keyword (then) before rm
+        ("rm -rf -- /etc", "rm_rf_dangerous"),              # -- end-of-options marker
+        ("rm -rf $HOME/*", "rm_rf_dangerous"),              # $HOME glob
+        ('rm -rf "/"', "rm_rf_dangerous"),                  # quoted root
+        ("rm -rf ${HOME}", "rm_rf_dangerous"),              # ${HOME} brace syntax
+        ('rm -rf "$HOME"/.*', "rm_rf_dangerous"),           # partially-quoted home glob
+        ("rm -rf //", "rm_rf_dangerous"),                   # repeated leading slash
+        ("\\rm -rf /etc", "rm_rf_dangerous"),               # backslash-escaped rm (alias bypass)
+        ("rm -rf ~/../*", "rm_rf_dangerous"),               # .. climbs above home to the root glob
+        ("rm -rf ~/.cache/../../*", "rm_rf_dangerous"),     # deeper .. still escapes the home anchor
+        ("rm -rf $HOME/../*", "rm_rf_dangerous"),           # $HOME escaped to the root glob
+        ("rm -rf ~/..", "rm_rf_dangerous"),                 # the home parent (/home or /) itself
+        ('FOO="a b" rm -rf /etc', "rm_rf_dangerous"),       # quoted-whitespace assignment before rm
+        ("rm -rf /etc/..", "rm_rf_dangerous"),              # absolute .. walks back to /
+        ("rm -rf /usr/../..", "rm_rf_dangerous"),           # stacked absolute .. still resolves to /
+        ("rm -rf $HOME/..", "rm_rf_dangerous"),             # the $HOME parent
+        ("! rm -rf /etc", "rm_rf_dangerous"),               # ! negation still executes rm
+        ("eval rm -rf /etc", "rm_rf_dangerous"),            # eval runs the (unquoted) rm
+        ("if rm -rf /etc; then echo hi; fi", "rm_rf_dangerous"),  # rm is the if-condition command
+        ("while rm -rf /etc; do :; done", "rm_rf_dangerous"),     # rm is the while-condition command
+        ("until rm -rf /etc; do :; done", "rm_rf_dangerous"),     # rm is the until-condition command
+        ("if true; then ! rm -rf /etc; fi", "rm_rf_dangerous"),   # ! after a body keyword
         ("curl -k https://example.com", "disable_ssl"),
         ("echo $PRIVATE_KEY", "expose_private_key"),
         ("git clone https://evil.example/repo.git", "git_clone_warning"),
@@ -89,6 +143,25 @@ def test_check_command_block_flag_matches_rule_class(command, expected_block):
     # Enforcement is driven by the explicit rule flag, not the message wording.
     _, _, block = check_command(command)
     assert block is expected_block
+
+
+def test_check_command_block_beats_warning():
+    # A BLOCK rule must win over an earlier WARNING rule that also matches, so a
+    # destructive rm hidden behind sudo/env is hard-blocked, not merely warned.
+    name, _, block = check_command("sudo rm -rf /")
+    assert (name, block) == ("rm_rf_dangerous", True)
+    name, _, block = check_command("env rm -rf /etc")
+    assert (name, block) == ("rm_rf_dangerous", True)
+    # A pure warning is still returned as a warning.
+    name, _, block = check_command("sudo systemctl restart sshd")
+    assert (name, block) == ("sudo_sensitive", False)
+
+
+def test_check_command_non_string_is_safe():
+    # A non-string command must not crash the hook (never-crash contract).
+    assert check_command(["rm", "-rf", "/"]) == (None, None, False)
+    assert check_command(None) == (None, None, False)
+    assert check_command(123) == (None, None, False)
 
 
 def test_main_allows_safe_bash_command(capsys):
@@ -228,3 +301,51 @@ def test_main_ignores_empty_command(capsys):
             main()
 
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize(
+    ("segment", "expected"),
+    [
+        # A quoted-whitespace assignment stays one word so the following rm is
+        # still seen in command position (was shattered by str.split()).
+        ('FOO="a b" rm -rf /etc', ["FOO=a b", "rm", "-rf", "/etc"]),
+        # Quote removal mirrors how the shell builds argv.
+        ('rm -rf "$HOME/Downloads"', ["rm", "-rf", "$HOME/Downloads"]),
+        ("rm -rf '/'", ["rm", "-rf", "/"]),
+        # An unquoted backslash escapes the next char (\rm -> rm).
+        ("\\rm -rf /etc", ["rm", "-rf", "/etc"]),
+        ("echo hello", ["echo", "hello"]),
+    ],
+)
+def test_shell_split_is_quote_and_escape_aware(segment, expected):
+    assert _shell_split(segment) == expected
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("~/Downloads/../*", "~/*"),     # collapses to the home root
+        ("~/foo/../bar", "~/bar"),       # a specific subdir under home, not a root
+        ("~/../*", "/*"),                # climbs above home -> filesystem-root glob
+        ("~/.cache/../../*", "/*"),      # deeper climb still escapes the anchor
+        ("~/..", "/"),                   # the home parent itself
+        ("$HOME/../*", "/*"),            # $HOME anchor escaped the same way
+        ("$HOME/..", "/"),               # bare $HOME parent
+        ("~/../foo", "/foo"),            # escaped but to a specific (non-root) dir
+        ("/etc/..", "/"),                # absolute climb back to the root stays "/"
+        ("/usr/../..", "/"),             # stacked absolute .. cannot pass /
+        ("/usr/local", "/usr/local"),    # an ordinary absolute path is unchanged
+    ],
+)
+def test_collapse_path_resolves_traversal(token, expected):
+    assert _collapse_path(token) == expected
+
+
+def test_split_subcommands_keeps_escaped_quote_inside_string():
+    # An escaped quote must not close the double-quoted string, so the `;` stays
+    # inside it and the harmless printf is a single sub-command (no fake rm).
+    assert _split_subcommands('printf "x \\"; rm -rf /"') == ['printf "x \\"; rm -rf /"']
+
+
+def test_split_subcommands_splits_on_unquoted_separator():
+    assert _split_subcommands("rm -rf /etc; echo ok") == ["rm -rf /etc", " echo ok"]

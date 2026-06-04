@@ -176,6 +176,118 @@ def test_scan_content_respects_allowlist_marker():
         rule_name, _, _ = scan_content("# seal-allow-secret\nk = SECRET_TOKEN_HERE", "t.py")
         assert rule_name == "fake_rule"
 
+        # An allowlisted match must NOT mask a later non-allowlisted match of the
+        # same rule (regression: a suppressed first match used to skip the rule).
+        rule_name, _, _ = scan_content(
+            "k1 = SECRET_TOKEN_HERE  # seal-allow-secret\nk2 = SECRET_TOKEN_HERE", "t.py"
+        )
+        assert rule_name == "fake_rule"
+
+
+def test_scan_content_exclude_does_not_mask_later_match():
+    # A first match suppressed by `exclude` must not hide a later real match of
+    # the same rule (same multi-match masking bug, via the exclude path).
+    mock_patterns = [{
+        "name": "ex_rule",
+        "pattern": re.compile(r"HIT"),
+        "exclude": re.compile(r"SKIP"),
+        "message": "[SEAL] BLOCKED: test",
+        "block": True,
+    }]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        # First HIT sits next to SKIP (excluded); the second HIT is clean and far
+        # outside the 100-char exclude window.
+        content = "SKIP HIT" + " " * 200 + "clean HIT"
+        rule_name, _, _ = scan_content(content, "t.py")
+        assert rule_name == "ex_rule"
+
+
+def test_scan_content_value_exclude_does_not_mask_later_match():
+    # A first match suppressed by value_exclude must not hide a later real match
+    # of the same rule (the third multi-match masking path).
+    mock_patterns = [{
+        "name": "ve_rule",
+        "pattern": re.compile(r"KEY=(?P<quoted_value>\S+)"),
+        "value_exclude": re.compile(r"PLACEHOLDER"),
+        "message": "[SEAL] BLOCKED: test",
+        "block": True,
+    }]
+    with patch.object(secret_scanner, "PATTERNS", mock_patterns):
+        content = "KEY=PLACEHOLDER\nKEY=real_value_not_placeholder"
+        rule_name, _, _ = scan_content(content, "t.py")
+        assert rule_name == "ve_rule"
+
+
+def test_scan_content_ignores_non_bip39_word_run():
+    # A 12+ run of short lowercase words that aren't BIP39 (ordinary prose) must
+    # not be flagged as a mnemonic now that matches are validated against the
+    # wordlist. (Built from a list so this file itself isn't a 12-word sequence.)
+    prose = " ".join([
+        "the", "lazy", "brown", "dogs", "were", "running", "through", "green",
+        "valleys", "under", "cloudy", "winter", "skies", "yesterday",
+    ])
+    assert scan_content(prose, "/repo/notes.txt") == (None, None, False)
+
+
+def test_looks_like_seed_phrase_validates_against_bip39():
+    real = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    assert secret_scanner._looks_like_seed_phrase(real) is True
+    prose = " ".join([
+        "the", "lazy", "brown", "dogs", "were", "running", "through",
+        "green", "valleys", "under", "cloudy", "winter", "skies",
+    ])
+    assert secret_scanner._looks_like_seed_phrase(prose) is False
+
+
+def test_looks_like_seed_phrase_fails_safe_without_wordlist(monkeypatch):
+    # If the vendored wordlist can't be loaded, accept the structural match
+    # (better a false positive than missing a real seed).
+    monkeypatch.setattr(secret_scanner, "BIP39_WORDS", frozenset())
+    assert secret_scanner._looks_like_seed_phrase("any unknown words at all here now") is True
+
+
+def test_load_bip39_words_loads_full_official_list():
+    words = secret_scanner._load_bip39_words()
+    assert len(words) == 2048
+    assert "abandon" in words and "zoo" in words
+
+
+def test_load_bip39_words_fails_safe_on_malformed_asset(monkeypatch):
+    # A truncated/garbled wordlist must fail safe (return empty -> accept all),
+    # never silently weaken detection with a partial set.
+    import io
+    monkeypatch.setattr("builtins.open", lambda *a, **k: io.StringIO("only\na\nfew\nwords\n"))
+    assert secret_scanner._load_bip39_words() == frozenset()
+
+
+def test_scan_content_finds_seed_after_junk_words():
+    # A real seed preceded by many non-BIP39 short words must still be found: the
+    # greedy regex match that fails BIP39 validation retries OVERLAPPING.
+    seed = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    content = ("foobar " * 13) + seed
+    rule_name, _, _ = scan_content(content, "/repo/notes.txt")
+    assert rule_name == "mnemonic_phrase"
+
+
+def test_scan_content_allowlist_does_not_absorb_next_line_seed():
+    # The phrase pattern is single-line ([ \t]+), so an allowlisted line can't be
+    # merged with a real seed on the NEXT line into one suppressed match. (Line 1
+    # uses a non-exclude word so the cross-line exclude window doesn't suppress
+    # line 2 — that path is covered separately.)
+    phrase = " ".join([
+        "abandon", "ability", "able", "about", "above", "absent",
+        "absorb", "abstract", "absurd", "abuse", "access", "accident",
+    ])
+    content = "wallet1 = " + phrase + "  # seal-allow-secret\nwallet2 = " + phrase
+    rule_name, _, _ = scan_content(content, "/repo/x.txt")
+    assert rule_name == "mnemonic_phrase"
+
 
 def test_main_clean_content_exits_success():
     payload = json.dumps({
@@ -284,3 +396,12 @@ def test_main_handles_non_dict_tool_input(bad_tool_input):
         with pytest.raises(SystemExit) as exc:
             main()
     assert exc.value.code == 0
+
+
+def test_load_bip39_words_failsafe_on_decode_error():
+    # A corrupt wordlist with invalid UTF-8 raises UnicodeDecodeError while the
+    # file is read. The loader must not let that crash the module import; it fails
+    # safe to an empty set (mnemonic detection falls back to the structural regex).
+    boom = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    with patch("secret_scanner.open", side_effect=boom):
+        assert secret_scanner._load_bip39_words() == frozenset()
