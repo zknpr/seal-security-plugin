@@ -16,10 +16,33 @@ def test_get_state_file_sanitizes_session_id_path_traversal():
     assert path.startswith(prefix)
 
 
-def test_get_state_file_preserves_safe_session_id_characters():
-    path = get_state_file("abc-DEF_123", "seal_guard_state")
+def test_get_state_file_preserves_safe_session_id_characters(monkeypatch):
+    monkeypatch.setattr("os.geteuid", lambda: 1000, raising=False)
 
-    assert path == os.path.expanduser("~/.claude/.seal_guard_state_abc-DEF_123.json")
+    class MockPwd:
+        pw_dir = "/home/mockuser"
+
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: MockPwd(), raising=False)
+
+    path = get_state_file("abc-DEF_123", "seal_guard_state")
+    assert path == "/home/mockuser/.claude/.seal_guard_state_abc-DEF_123.json"
+
+
+def test_get_state_file_fallback_on_import_error(monkeypatch):
+    # Simulate missing pwd module (e.g. Windows)
+    import builtins
+    real_import = builtins.__import__
+
+    def mock_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == 'pwd':
+            raise ImportError("No module named 'pwd'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+
+    monkeypatch.setenv("HOME", "/fallback/home")
+    path = get_state_file("test-session", "test_prefix")
+    assert path == "/fallback/home/.claude/.test_prefix_test-session.json"
 
 
 def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatch):

@@ -64,7 +64,16 @@ def read_hook_input(log_file):
 def get_state_file(session_id, prefix):
     """Build a per-session state file path under ~/.claude with a safe name."""
     safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(session_id))
-    return os.path.expanduser(f"~/.claude/.{prefix}_{safe}.json")
+
+    try:
+        import pwd
+        # Securely determine the home directory of the effective user to prevent
+        # $HOME spoofing vulnerabilities when run as root.
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except (ImportError, AttributeError, KeyError):
+        home = os.path.expanduser("~")
+
+    return os.path.join(home, f".claude/.{prefix}_{safe}.json")
 
 
 def load_shown(session_id, prefix):
