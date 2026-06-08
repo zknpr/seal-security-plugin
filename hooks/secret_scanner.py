@@ -25,7 +25,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import IS_DEBUG, debug_log, load_shown, read_hook_input, save_shown
 
 # Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
 # rather than a predictable /tmp path, which in a world-writable directory is a
@@ -364,7 +364,8 @@ def main():
     if not content:
         sys.exit(0)
 
-    debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
+    if IS_DEBUG:
+        debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
 
     rule_name, message, should_block = scan_content(content, file_path)
 

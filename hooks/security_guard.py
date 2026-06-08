@@ -18,7 +18,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import IS_DEBUG, debug_log, load_shown, read_hook_input, save_shown
 
 # Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
 # rather than a predictable /tmp path, which in a world-writable directory is a

@@ -5,7 +5,13 @@ from unittest.mock import patch
 import pytest
 
 import utils
-from utils import debug_log, get_state_file, load_shown, read_hook_input, save_shown
+from utils import (
+    debug_log,
+    get_state_file,
+    load_shown,
+    read_hook_input,
+    save_shown,
+)
 
 
 def test_get_state_file_sanitizes_session_id_path_traversal():
@@ -19,10 +25,14 @@ def test_get_state_file_sanitizes_session_id_path_traversal():
 def test_get_state_file_preserves_safe_session_id_characters():
     path = get_state_file("abc-DEF_123", "seal_guard_state")
 
-    assert path == os.path.expanduser("~/.claude/.seal_guard_state_abc-DEF_123.json")
+    assert path == os.path.expanduser(
+        "~/.claude/.seal_guard_state_abc-DEF_123.json"
+    )
 
 
-def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatch):
+def test_load_shown_returns_empty_set_for_non_iterable_json(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(
         os.path,
         "expanduser",
@@ -109,7 +119,9 @@ def test_save_shown_oserror_with_log_file(tmp_path, monkeypatch):
     log_file = str(tmp_path / "test.log")
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         with patch("utils.debug_log") as mock_debug_log:
-            save_shown("test-session", "test_prefix", {"item"}, log_file=log_file)
+            save_shown(
+                "test-session", "test_prefix", {"item"}, log_file=log_file
+            )
 
             mock_debug_log.assert_called_once()
             args = mock_debug_log.call_args[0]
@@ -145,12 +157,15 @@ def test_read_hook_input_allows_non_object_json(raw):
     assert exc.value.code == 0
 
 
-@pytest.mark.parametrize("raw", [
-    '{"tool_input": "oops"}',
-    '{"tool_input": 123}',
-    '{"tool_input": [1, 2]}',
-    '{"tool_input": null}',
-])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"tool_input": "oops"}',
+        '{"tool_input": 123}',
+        '{"tool_input": [1, 2]}',
+        '{"tool_input": null}',
+    ],
+)
 def test_read_hook_input_coerces_non_dict_tool_input(raw):
     # A present-but-non-object tool_input is normalized to {} so callers can
     # safely call tool_input.get(...) without crashing.
@@ -160,7 +175,9 @@ def test_read_hook_input_coerces_non_dict_tool_input(raw):
 
 
 def test_read_hook_input_preserves_dict_tool_input():
-    with patch("sys.stdin.read", return_value='{"tool_input": {"command": "x"}}'):
+    with patch(
+        "sys.stdin.read", return_value='{"tool_input": {"command": "x"}}'
+    ):
         data = read_hook_input("/tmp/log.log")
     assert data["tool_input"] == {"command": "x"}
 
@@ -170,6 +187,19 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     # raise UnicodeEncodeError on write; debug_log must swallow it rather than
     # let it propagate and crash the hook before rule evaluation.
     # SEAL_DEBUG must be set or debug_log returns early and never exercises the write.
-    monkeypatch.setenv("SEAL_DEBUG", "1")
+    monkeypatch.setattr(utils, "IS_DEBUG", True)
     log_file = tmp_path / "debug.log"
     debug_log("payload \ud800 end", str(log_file))
+
+
+def test_debug_log_swallows_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "IS_DEBUG", True)
+    log_file = tmp_path / "debug.log"
+    import builtins
+
+    def mock_open(*args, **kwargs):
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(builtins, "open", mock_open)
+    # Should not raise exception
+    debug_log("test", str(log_file))
