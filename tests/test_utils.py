@@ -71,6 +71,16 @@ def test_load_shown_handles_oserror(tmp_path, monkeypatch):
         assert load_shown("oserror", "seal_guard_state") == set()
 
 
+def test_load_shown_returns_empty_set_when_file_not_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    # File doesn't exist, should return empty set
+    assert load_shown("non-existent-session", "seal_guard_state") == set()
+
+
 def test_save_shown_happy_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
         os.path,
@@ -173,3 +183,28 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     monkeypatch.setenv("SEAL_DEBUG", "1")
     log_file = tmp_path / "debug.log"
     debug_log("payload \ud800 end", str(log_file))
+
+
+def test_debug_log_disabled_by_default(tmp_path, monkeypatch):
+    # By default (SEAL_DEBUG not set), debug_log should return early
+    # without creating the file or writing anything to it.
+    monkeypatch.delenv("SEAL_DEBUG", raising=False)
+    log_file = tmp_path / "debug_disabled.log"
+    debug_log("this should not be logged", str(log_file))
+
+    assert not os.path.exists(log_file)
+
+def test_debug_log_swallows_exception_when_writing(tmp_path, monkeypatch):
+    # Test that debug_log catches and swallows exceptions
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "debug_error.log"
+
+    import builtins
+
+    def mock_open(*args, **kwargs):
+        raise OSError("Permission denied")
+
+    with monkeypatch.context() as m:
+        m.setattr(builtins, "open", mock_open)
+        # Should not raise
+        debug_log("this will fail to write", str(log_file))
