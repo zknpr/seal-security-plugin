@@ -347,22 +347,19 @@ def scan_content(content, file_path):
     return None, None, False
 
 
-def main():
-    """Main hook entry point."""
-    data = read_hook_input(DEBUG_LOG)
+def process_tool_input(session_id, tool_name, tool_input):
+    """Core logic to scan tool input and manage warning state.
 
-    session_id = data.get("session_id", "default")
-    tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
-
+    Returns a tuple (exit_code, output_message).
+    """
     if tool_name not in ("Write", "Edit"):
-        sys.exit(0)
+        return 0, None
 
     file_path = tool_input.get("file_path", "")
     content = extract_content(tool_name, tool_input)
 
     if not content:
-        sys.exit(0)
+        return 0, None
 
     debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
 
@@ -378,9 +375,8 @@ def main():
         # sit behind the once-per-session dedup, or a later same-rule write to the
         # same file (the dedup key is rule:file_path) would slip through.
         if should_block:
-            print(message, file=sys.stderr)
             debug_log(f"BLOCKED: {rule_name} in {file_path}", DEBUG_LOG)
-            sys.exit(2)
+            return 2, message
 
         # Warning (incl. the .env note): show once per session, then allow.
         warning_key = f"{rule_name}:{file_path}"
@@ -388,10 +384,26 @@ def main():
         if warning_key not in shown:
             shown.add(warning_key)
             save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-            print(message, file=sys.stderr)
             debug_log(f"WARNED: {rule_name} in {file_path}", DEBUG_LOG)
+            return 0, message
 
-    sys.exit(0)
+    return 0, None
+
+
+def main():
+    """Main hook entry point."""
+    data = read_hook_input(DEBUG_LOG)
+
+    session_id = data.get("session_id", "default")
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
+
+    exit_code, message = process_tool_input(session_id, tool_name, tool_input)
+
+    if message:
+        print(message, file=sys.stderr)
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
