@@ -22,6 +22,21 @@ def test_get_state_file_preserves_safe_session_id_characters():
     assert path == os.path.expanduser("~/.claude/.seal_guard_state_abc-DEF_123.json")
 
 
+def test_load_shown_happy_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    shown_list = ["item1", "item2"]
+    path = get_state_file("test-session", "test_prefix")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(shown_list, f)
+
+    assert load_shown("test-session", "test_prefix") == {"item1", "item2"}
+
+
 def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatch):
     monkeypatch.setattr(
         os.path,
