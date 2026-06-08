@@ -18,12 +18,12 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import debug_log, get_claude_path, load_shown, read_hook_input, save_shown
 
 # Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
 # rather than a predictable /tmp path, which in a world-writable directory is a
 # symlink/info-disclosure risk (CWE-377).
-DEBUG_LOG = os.path.expanduser("~/.claude/seal-security-guard.log")
+DEBUG_LOG = get_claude_path("seal-security-guard.log")
 STATE_PREFIX = "seal_guard_state"
 
 # State file tracks which warnings have been shown per session

@@ -61,10 +61,15 @@ def read_hook_input(log_file):
     return data
 
 
+def get_claude_path(filename):
+    """Build a file path under ~/.claude."""
+    return os.path.expanduser(f"~/.claude/{filename}")
+
+
 def get_state_file(session_id, prefix):
     """Build a per-session state file path under ~/.claude with a safe name."""
     safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(session_id))
-    return os.path.expanduser(f"~/.claude/.{prefix}_{safe}.json")
+    return get_claude_path(f".{prefix}_{safe}.json")
 
 
 def load_shown(session_id, prefix):
