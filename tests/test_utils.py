@@ -22,6 +22,15 @@ def test_get_state_file_preserves_safe_session_id_characters():
     assert path == os.path.expanduser("~/.claude/.seal_guard_state_abc-DEF_123.json")
 
 
+def test_load_shown_returns_empty_set_when_file_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    assert load_shown("missing-file", "seal_guard_state") == set()
+
+
 def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatch):
     monkeypatch.setattr(
         os.path,
