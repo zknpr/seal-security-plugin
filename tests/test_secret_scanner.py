@@ -5,7 +5,32 @@ from unittest.mock import patch
 import pytest
 
 import secret_scanner
-from secret_scanner import extract_content, is_env_file, main, scan_content
+from secret_scanner import (
+    _matched_line,
+    extract_content,
+    is_env_file,
+    main,
+    scan_content,
+)
+
+
+@pytest.mark.parametrize(
+    ("content", "index", "expected"),
+    [
+        ("first line\nsecond line\nthird line", 0, "first line"),  # start of first line
+        ("first line\nsecond line\nthird line", 5, "first line"),  # middle of first line
+        ("first line\nsecond line\nthird line", 10, "first line"),  # on first \n
+        ("first line\nsecond line\nthird line", 11, "second line"),  # start of second line
+        ("first line\nsecond line\nthird line", 15, "second line"),  # middle of second line
+        ("first line\nsecond line\nthird line", 22, "second line"),  # on second \n
+        ("first line\nsecond line\nthird line", 23, "third line"),  # start of third line
+        ("first line\nsecond line\nthird line", 30, "third line"),  # end of string
+        ("single line string", 5, "single line string"),  # single line, no newline
+        ("", 0, ""),  # empty string
+    ],
+)
+def test_matched_line(content, index, expected):
+    assert _matched_line(content, index) == expected
 
 
 @pytest.mark.parametrize(

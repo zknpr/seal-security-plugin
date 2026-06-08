@@ -22,6 +22,30 @@ def test_get_state_file_preserves_safe_session_id_characters():
     assert path == os.path.expanduser("~/.claude/.seal_guard_state_abc-DEF_123.json")
 
 
+def test_load_shown_happy_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    shown_list = ["item1", "item2"]
+    path = get_state_file("test-session", "test_prefix")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(shown_list, f)
+
+    assert load_shown("test-session", "test_prefix") == {"item1", "item2"}
+
+
+def test_load_shown_returns_empty_set_when_file_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    assert load_shown("missing-file", "seal_guard_state") == set()
+
+
 def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatch):
     monkeypatch.setattr(
         os.path,
@@ -173,3 +197,26 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     monkeypatch.setenv("SEAL_DEBUG", "1")
     log_file = tmp_path / "debug.log"
     debug_log("payload \ud800 end", str(log_file))
+
+
+def test_debug_log_happy_path(tmp_path, monkeypatch):
+    # With SEAL_DEBUG enabled, debug_log writes the message with a timestamp
+    # prefix to the requested log file.
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "debug.log"
+    debug_log("hello test", str(log_file))
+
+    assert log_file.exists()
+    content = log_file.read_text()
+    assert content.startswith("[")
+    assert content.endswith("] hello test\n")
+
+
+def test_debug_log_disabled_by_default(tmp_path, monkeypatch):
+    # By default (SEAL_DEBUG unset) debug_log returns early without creating
+    # the file or writing anything — the opt-in default keeps logging off.
+    monkeypatch.delenv("SEAL_DEBUG", raising=False)
+    log_file = tmp_path / "debug_disabled.log"
+    debug_log("this should not be logged", str(log_file))
+
+    assert not os.path.exists(log_file)

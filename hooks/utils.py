@@ -10,6 +10,10 @@ import re
 import sys
 from datetime import datetime
 
+# Precompiled once at import: get_state_file runs per hook invocation and the
+# pattern never changes, so compiling it here avoids re-parsing on every call.
+_SAFE_SESSION_ID_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
 
 def debug_log(msg, log_file):
     """Append a timestamped debug message to the requested hook log file."""
@@ -63,7 +67,7 @@ def read_hook_input(log_file):
 
 def get_state_file(session_id, prefix):
     """Build a per-session state file path under ~/.claude with a safe name."""
-    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(session_id))
+    safe = _SAFE_SESSION_ID_RE.sub("_", str(session_id))
     return os.path.expanduser(f"~/.claude/.{prefix}_{safe}.json")
 
 
