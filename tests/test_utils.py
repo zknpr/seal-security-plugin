@@ -170,6 +170,6 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     # raise UnicodeEncodeError on write; debug_log must swallow it rather than
     # let it propagate and crash the hook before rule evaluation.
     # SEAL_DEBUG must be set or debug_log returns early and never exercises the write.
-    monkeypatch.setenv("SEAL_DEBUG", "1")
+    monkeypatch.setattr(utils, "_DEBUG_ENABLED", True)
     log_file = tmp_path / "debug.log"
     debug_log("payload \ud800 end", str(log_file))

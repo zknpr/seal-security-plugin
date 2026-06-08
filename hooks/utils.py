@@ -11,13 +11,16 @@ import sys
 from datetime import datetime
 
 
+_DEBUG_ENABLED = os.environ.get("SEAL_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def debug_log(msg, log_file):
     """Append a timestamped debug message to the requested hook log file."""
     # Opt-in only: the debug log persists plaintext file-path fragments, so it
     # stays OFF unless SEAL_DEBUG is set to a truthy value (1/true/yes/on). This
     # avoids both per-call I/O and writing sensitive content by default. An
     # explicit allow-list means SEAL_DEBUG=0 / false correctly disables it.
-    if os.environ.get("SEAL_DEBUG", "").strip().lower() not in ("1", "true", "yes", "on"):
+    if not _DEBUG_ENABLED:
         return
     # Best-effort logger: it must NEVER break the hook. msg can carry untrusted
     # text (command/file_path) including lone surrogates, so f.write() may raise
