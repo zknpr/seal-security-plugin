@@ -29,7 +29,7 @@ def debug_log(msg, log_file):
             os.makedirs(dirname, exist_ok=True)
         with open(log_file, "a") as f:
             f.write(f"[{ts}] {msg}\n")
-    except Exception:
+    except (OSError, UnicodeEncodeError):
         pass
 
 
