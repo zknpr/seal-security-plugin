@@ -89,3 +89,39 @@ def save_shown(session_id, prefix, shown, log_file=None):
     except OSError as e:
         if log_file is not None:
             debug_log(f"Failed to save state file: {e}", log_file)
+
+
+def run_hook(process_func, state_prefix, debug_log_file):
+    """Shared runner for hooks.
+
+    Reads hook input, delegates tool-specific parsing and scanning to `process_func`,
+    and handles standard formatting, deduplication state, and exit code boundaries.
+
+    `process_func` should accept `(tool_name, tool_input)` and return a tuple:
+    `(rule_name, message, should_block, warning_key, debug_context)` or
+    `(None, None, False, None, None)` if there's no issue.
+    """
+    data = read_hook_input(debug_log_file)
+    session_id = data.get("session_id", "default")
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+
+    result = process_func(tool_name, tool_input)
+    if not result or result[0] is None:
+        sys.exit(0)
+
+    rule_name, message, should_block, warning_key, debug_context = result
+
+    if should_block:
+        print(message, file=sys.stderr)
+        debug_log(f"BLOCKED: {rule_name}{debug_context}", debug_log_file)
+        sys.exit(2)
+
+    shown = load_shown(session_id, state_prefix)
+    if warning_key not in shown:
+        shown.add(warning_key)
+        save_shown(session_id, state_prefix, shown, debug_log_file)
+        print(message, file=sys.stderr)
+        debug_log(f"WARNED: {rule_name}{debug_context}", debug_log_file)
+
+    sys.exit(0)

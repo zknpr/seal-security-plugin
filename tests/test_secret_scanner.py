@@ -316,8 +316,8 @@ def test_main_blocks_on_first_secret_exposure():
 
     with patch("sys.stdin.read", return_value=payload), \
          patch("sys.stderr.write") as mock_stderr, \
-         patch.object(secret_scanner, "load_shown", return_value=set()), \
-         patch.object(secret_scanner, "save_shown") as mock_save:
+         patch("utils.load_shown", return_value=set()), \
+         patch("utils.save_shown") as mock_save:
         with pytest.raises(SystemExit) as exc:
             main()
 
@@ -344,7 +344,7 @@ def test_main_blocks_repeated_secret_exposure():
 
     with patch("sys.stdin.read", return_value=payload), \
          patch("sys.stderr.write"), \
-         patch.object(secret_scanner, "load_shown", return_value=shown_set):
+         patch("utils.load_shown", return_value=shown_set):
         with pytest.raises(SystemExit) as exc:
             main()
 
@@ -363,8 +363,8 @@ def test_main_warns_instead_of_blocking_on_env_files():
 
     with patch("sys.stdin.read", return_value=payload), \
          patch("sys.stderr.write"), \
-         patch.object(secret_scanner, "load_shown", return_value=set()), \
-         patch.object(secret_scanner, "save_shown") as mock_save:
+         patch("utils.load_shown", return_value=set()), \
+         patch("utils.save_shown") as mock_save:
         with pytest.raises(SystemExit) as exc:
             main()
 

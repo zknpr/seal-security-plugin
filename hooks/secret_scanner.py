@@ -25,7 +25,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import debug_log, run_hook
 
 # Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
 # rather than a predictable /tmp path, which in a world-writable directory is a
@@ -347,22 +347,16 @@ def scan_content(content, file_path):
     return None, None, False
 
 
-def main():
-    """Main hook entry point."""
-    data = read_hook_input(DEBUG_LOG)
-
-    session_id = data.get("session_id", "default")
-    tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
-
+def _process_write(tool_name, tool_input):
+    """Process Write/Edit tool calls for secret scanning."""
     if tool_name not in ("Write", "Edit"):
-        sys.exit(0)
+        return None, None, False, None, None
 
     file_path = tool_input.get("file_path", "")
     content = extract_content(tool_name, tool_input)
 
     if not content:
-        sys.exit(0)
+        return None, None, False, None, None
 
     debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
 
@@ -374,24 +368,15 @@ def main():
             message = message.replace("BLOCKED", "NOTE (env file)")
             should_block = False
 
-        # A blocking secret must be blocked on EVERY write. Enforcement must never
-        # sit behind the once-per-session dedup, or a later same-rule write to the
-        # same file (the dedup key is rule:file_path) would slip through.
-        if should_block:
-            print(message, file=sys.stderr)
-            debug_log(f"BLOCKED: {rule_name} in {file_path}", DEBUG_LOG)
-            sys.exit(2)
-
-        # Warning (incl. the .env note): show once per session, then allow.
         warning_key = f"{rule_name}:{file_path}"
-        shown = load_shown(session_id, STATE_PREFIX)
-        if warning_key not in shown:
-            shown.add(warning_key)
-            save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-            print(message, file=sys.stderr)
-            debug_log(f"WARNED: {rule_name} in {file_path}", DEBUG_LOG)
+        return rule_name, message, should_block, warning_key, f" in {file_path}"
 
-    sys.exit(0)
+    return None, None, False, None, None
+
+
+def main():
+    """Main hook entry point."""
+    run_hook(_process_write, STATE_PREFIX, DEBUG_LOG)
 
 
 if __name__ == "__main__":

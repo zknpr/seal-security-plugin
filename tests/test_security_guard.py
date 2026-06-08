@@ -171,8 +171,8 @@ def test_main_allows_safe_bash_command(capsys):
         "tool_input": {"command": "echo hello"},
     }
     with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value=set()) as mock_load, \
-         patch.object(security_guard, "save_shown") as mock_save:
+         patch("utils.load_shown", return_value=set()) as mock_load, \
+         patch("utils.save_shown") as mock_save:
         with pytest.raises(SystemExit) as exc:
             main()
 
@@ -191,7 +191,7 @@ def test_main_blocks_dangerous_bash_command(capsys):
         "tool_input": {"command": "chmod 777 /tmp/file"},
     }
     with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "save_shown") as mock_save:
+         patch("utils.save_shown") as mock_save:
         with pytest.raises(SystemExit) as exc:
             main()
 
@@ -214,7 +214,7 @@ def test_main_blocks_repeated_dangerous_command(capsys):
     }
     warning_key = f"chmod_777:{hashlib.sha256(command.encode('utf-8')).hexdigest()}"
     with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value={warning_key}):
+         patch("utils.load_shown", return_value={warning_key}):
         with pytest.raises(SystemExit) as exc:
             main()
 
@@ -240,8 +240,8 @@ def test_main_warns_dangerous_bash_command(capsys):
         "tool_input": {"command": "printenv"},
     }
     with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value=set()) as mock_load, \
-         patch.object(security_guard, "save_shown") as mock_save:
+         patch("utils.load_shown", return_value=set()) as mock_load, \
+         patch("utils.save_shown") as mock_save:
         with pytest.raises(SystemExit) as exc:
             main()
 
@@ -264,8 +264,8 @@ def test_main_deduplicates_warnings(capsys):
     shown_set = {warning_key}
 
     with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value=shown_set) as mock_load, \
-         patch.object(security_guard, "save_shown") as mock_save:
+         patch("utils.load_shown", return_value=shown_set) as mock_load, \
+         patch("utils.save_shown") as mock_save:
         with pytest.raises(SystemExit) as exc:
             main()
 

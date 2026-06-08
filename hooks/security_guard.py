@@ -18,7 +18,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import debug_log, run_hook
 
 # Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
 # rather than a predictable /tmp path, which in a world-writable directory is a
@@ -510,48 +510,31 @@ def check_command(command):
     return warning if warning is not None else (None, None, False)
 
 
-def main():
-    """Main hook entry point. Reads tool input from stdin, checks against rules."""
-    data = read_hook_input(DEBUG_LOG)
-
-    session_id = data.get("session_id", "default")
-    tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
-
-    # Only process Bash tool calls
+def _process_bash(tool_name, tool_input):
+    """Process Bash tool calls for security rules."""
     if tool_name != "Bash":
-        sys.exit(0)
+        return None, None, False, None, None
 
     command = tool_input.get("command", "")
     # A non-string command (list/number/null) must not crash the hook downstream.
     if not isinstance(command, str) or not command:
-        sys.exit(0)
+        return None, None, False, None, None
 
     # Log the length, never the command text: a command may carry a pasted
     # secret and the debug log is a durable plaintext file.
     debug_log(f"Checking command (length: {len(command)})", DEBUG_LOG)
 
     rule_name, message, should_block = check_command(command)
-
     if rule_name and message:
-        # BLOCK rules must enforce on EVERY occurrence. Enforcement must never
-        # sit behind the once-per-session dedup, or a dangerous command would be
-        # allowed just by repeating it. Dedup applies only to WARNING text.
-        if should_block:
-            print(message, file=sys.stderr)
-            debug_log(f"BLOCKED: {rule_name}", DEBUG_LOG)
-            sys.exit(2)
-
-        # Warning: show each rule+command combo once per session, then allow.
         warning_key = f"{rule_name}:{hashlib.sha256(command.encode('utf-8', errors='replace')).hexdigest()}"
-        shown = load_shown(session_id, STATE_PREFIX)
-        if warning_key not in shown:
-            shown.add(warning_key)
-            save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)
-            print(message, file=sys.stderr)
-            debug_log(f"WARNED: {rule_name}", DEBUG_LOG)
+        return rule_name, message, should_block, warning_key, ""
 
-    sys.exit(0)
+    return None, None, False, None, None
+
+
+def main():
+    """Main hook entry point. Reads tool input from stdin, checks against rules."""
+    run_hook(_process_bash, STATE_PREFIX, DEBUG_LOG)
 
 
 if __name__ == "__main__":
