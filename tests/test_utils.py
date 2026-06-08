@@ -165,6 +165,17 @@ def test_read_hook_input_preserves_dict_tool_input():
     assert data["tool_input"] == {"command": "x"}
 
 
+def test_debug_log_happy_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "debug.log"
+    debug_log("hello test", str(log_file))
+
+    assert log_file.exists()
+    content = log_file.read_text()
+    assert content.endswith("] hello test\n")
+    assert content.startswith("[")
+
+
 def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     # A lone surrogate (e.g. from JSON "\ud800") can't encode to UTF-8 and would
     # raise UnicodeEncodeError on write; debug_log must swallow it rather than
