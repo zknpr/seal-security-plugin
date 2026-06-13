@@ -269,8 +269,8 @@ def _is_dangerous_rm(command):
                 recursive |= "r" in w or "R" in w
                 force |= "f" in w
             else:
-                targets.append(_normalize_rm_target(w))
-        if recursive and force and any(_RM_ROOT_TOKEN.match(t) for t in targets):
+                targets.append(w)
+        if recursive and force and any(_RM_ROOT_TOKEN.match(_normalize_rm_target(t)) for t in targets):
             return True
     return False
 
