@@ -88,7 +88,8 @@ def save_shown(session_id, prefix, shown, log_file=None):
     path = get_state_file(session_id, prefix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with open(fd, "w") as f:
             json.dump(list(shown), f)
     except OSError as e:
         if log_file is not None:
