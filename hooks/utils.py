@@ -31,7 +31,7 @@ def debug_log(msg, log_file):
         dirname = os.path.dirname(log_file)
         if dirname:  # skip makedirs("") for a bare filename (would raise)
             os.makedirs(dirname, exist_ok=True)
-        with open(log_file, "a") as f:
+        with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
@@ -76,7 +76,7 @@ def load_shown(session_id, prefix):
     path = get_state_file(session_id, prefix)
     if os.path.exists(path):
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return set(json.load(f))
         except (json.JSONDecodeError, OSError, TypeError):
             return set()
@@ -88,7 +88,7 @@ def save_shown(session_id, prefix, shown, log_file=None):
     path = get_state_file(session_id, prefix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(list(shown), f)
     except OSError as e:
         if log_file is not None:
