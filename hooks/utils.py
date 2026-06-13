@@ -31,7 +31,8 @@ def debug_log(msg, log_file):
         dirname = os.path.dirname(log_file)
         if dirname:  # skip makedirs("") for a bare filename (would raise)
             os.makedirs(dirname, exist_ok=True)
-        with open(log_file, "a") as f:
+        fd = os.open(log_file, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
