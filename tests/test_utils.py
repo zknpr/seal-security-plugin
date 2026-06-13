@@ -118,7 +118,9 @@ def test_save_shown_oserror_without_log_file(tmp_path, monkeypatch):
         lambda path: str(tmp_path / path.removeprefix("~/")),
     )
 
-    with patch("os.makedirs", side_effect=OSError("Permission denied")):
+    with monkeypatch.context() as m:
+        m.setattr(os, "makedirs", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("Permission denied")))
+
         # Should not raise
         save_shown("test-session", "test_prefix", {"item"})
 
@@ -131,7 +133,9 @@ def test_save_shown_oserror_with_log_file(tmp_path, monkeypatch):
     )
 
     log_file = str(tmp_path / "test.log")
-    with patch("os.makedirs", side_effect=OSError("Permission denied")):
+    with monkeypatch.context() as m:
+        m.setattr(os, "makedirs", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("Permission denied")))
+
         with patch("utils.debug_log") as mock_debug_log:
             save_shown("test-session", "test_prefix", {"item"}, log_file=log_file)
 
@@ -220,3 +224,28 @@ def test_debug_log_disabled_by_default(tmp_path, monkeypatch):
     debug_log("this should not be logged", str(log_file))
 
     assert not os.path.exists(log_file)
+
+def test_debug_log_swallows_oserror_on_makedirs(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "subdir" / "debug.log"
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "makedirs", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("Permission denied")))
+
+        debug_log("hello test", str(log_file))
+
+    assert not log_file.exists()
+
+def test_debug_log_swallows_oserror_on_open(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "debug.log"
+
+    import builtins
+    def mock_open(*args, **kwargs):
+        raise OSError("Permission denied")
+
+    with monkeypatch.context() as m:
+        m.setattr(builtins, "open", mock_open)
+        debug_log("hello test", str(log_file))
+
+    assert not log_file.exists()
