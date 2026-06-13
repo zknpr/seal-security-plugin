@@ -314,113 +314,96 @@ def test_scan_content_allowlist_does_not_absorb_next_line_seed():
     assert rule_name == "mnemonic_phrase"
 
 
+def run_main_with_payload(payload: dict | str | list | None) -> int:
+    import json
+    payload_str = payload if isinstance(payload, str) else json.dumps(payload)
+    with patch("sys.stdin.read", return_value=payload_str):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    return exc.value.code
+
+
 def test_main_clean_content_exits_success():
-    payload = json.dumps({
+    payload = {
         "session_id": "test1",
         "tool_name": "Write",
         "tool_input": {
             "file_path": "/repo/clean.py",
             "content": "print('clean')",
         },
-    })
-    with patch("sys.stdin.read", return_value=payload):
-        with pytest.raises(SystemExit) as exc:
-            main()
-    assert exc.value.code == 0
+    }
+    assert run_main_with_payload(payload) == 0
 
 
-def test_main_blocks_on_first_secret_exposure():
-    payload = json.dumps({
+@patch("sys.stderr.write")
+@patch.object(secret_scanner, "load_shown", return_value=set())
+@patch.object(secret_scanner, "save_shown")
+def test_main_blocks_on_first_secret_exposure(mock_save, mock_load, mock_stderr):
+    payload = {
         "session_id": "test2",
         "tool_name": "Write",
         "tool_input": {
             "file_path": "/repo/app.py",
             "content": "private_key = '0x" + "a" * 64 + "'",
         },
-    })
-
-    with patch("sys.stdin.read", return_value=payload), \
-         patch("sys.stderr.write") as mock_stderr, \
-         patch.object(secret_scanner, "load_shown", return_value=set()), \
-         patch.object(secret_scanner, "save_shown") as mock_save:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 2
+    }
+    assert run_main_with_payload(payload) == 2
     # Blocks bypass dedup state — save is not called for a blocking write.
     mock_save.assert_not_called()
     mock_stderr.assert_called()
 
 
-def test_main_blocks_repeated_secret_exposure():
+@patch("sys.stderr.write")
+@patch.object(secret_scanner, "load_shown", return_value={"eth_private_key:/repo/app.py"})
+def test_main_blocks_repeated_secret_exposure(mock_load, mock_stderr):
     # Regression: a blocking secret must be blocked on EVERY write, even after the
     # rule:file_path key was recorded. Otherwise a later write of the same (or a
     # different!) private key to that file would slip through.
-    payload = json.dumps({
+    payload = {
         "session_id": "test3",
         "tool_name": "Write",
         "tool_input": {
             "file_path": "/repo/app.py",
             "content": "private_key = '0x" + "a" * 64 + "'",
         },
-    })
-
-    shown_set = {"eth_private_key:/repo/app.py"}
-
-    with patch("sys.stdin.read", return_value=payload), \
-         patch("sys.stderr.write"), \
-         patch.object(secret_scanner, "load_shown", return_value=shown_set):
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 2
+    }
+    assert run_main_with_payload(payload) == 2
 
 
-def test_main_warns_instead_of_blocking_on_env_files():
-    payload = json.dumps({
+@patch("sys.stderr.write")
+@patch.object(secret_scanner, "load_shown", return_value=set())
+@patch.object(secret_scanner, "save_shown")
+def test_main_warns_instead_of_blocking_on_env_files(mock_save, mock_load, mock_stderr):
+    payload = {
         "session_id": "test4",
         "tool_name": "Write",
         "tool_input": {
             "file_path": "/repo/.env",
             "content": "private_key = '0x" + "a" * 64 + "'",
         },
-    })
-
-    with patch("sys.stdin.read", return_value=payload), \
-         patch("sys.stderr.write"), \
-         patch.object(secret_scanner, "load_shown", return_value=set()), \
-         patch.object(secret_scanner, "save_shown") as mock_save:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
+    }
+    assert run_main_with_payload(payload) == 0
     mock_save.assert_called_once()
 
 
 def test_main_ignores_irrelevant_tools():
-    payload = json.dumps({
+    payload = {
         "session_id": "test5",
         "tool_name": "Read",
         "tool_input": {"file_path": "/repo/app.py"},
-    })
-    with patch("sys.stdin.read", return_value=payload):
-        with pytest.raises(SystemExit) as exc:
-            main()
-    assert exc.value.code == 0
+    }
+    assert run_main_with_payload(payload) == 0
 
 
 @pytest.mark.parametrize("bad_tool_input", [None, "oops", 123, [1, 2]])
 def test_main_handles_non_dict_tool_input(bad_tool_input):
     # A non-object tool_input must not crash the hook (never-crash contract).
-    payload = json.dumps({
+    payload = {
         "session_id": "test6",
         "tool_name": "Write",
         "tool_input": bad_tool_input,
-    })
-    with patch("sys.stdin.read", return_value=payload):
-        with pytest.raises(SystemExit) as exc:
-            main()
-    assert exc.value.code == 0
+    }
+    assert run_main_with_payload(payload) == 0
 
 
 def test_load_bip39_words_failsafe_on_decode_error():

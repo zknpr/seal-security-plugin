@@ -164,19 +164,24 @@ def test_check_command_non_string_is_safe():
     assert check_command(123) == (None, None, False)
 
 
-def test_main_allows_safe_bash_command(capsys):
+def run_main_with_payload(payload: dict | str | list | None) -> int:
+    import json
+    payload_str = payload if isinstance(payload, str) else json.dumps(payload)
+    with patch("sys.stdin.read", return_value=payload_str):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    return exc.value.code
+
+
+@patch.object(security_guard, "load_shown", return_value=set())
+@patch.object(security_guard, "save_shown")
+def test_main_allows_safe_bash_command(mock_save, mock_load, capsys):
     payload = {
         "session_id": "test_session",
         "tool_name": "Bash",
         "tool_input": {"command": "echo hello"},
     }
-    with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value=set()) as mock_load, \
-         patch.object(security_guard, "save_shown") as mock_save:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
+    assert run_main_with_payload(payload) == 0
     mock_load.assert_not_called()
     mock_save.assert_not_called()
 
@@ -184,18 +189,14 @@ def test_main_allows_safe_bash_command(capsys):
     assert captured.err == ""
 
 
-def test_main_blocks_dangerous_bash_command(capsys):
+@patch.object(security_guard, "save_shown")
+def test_main_blocks_dangerous_bash_command(mock_save, capsys):
     payload = {
         "session_id": "test_session",
         "tool_name": "Bash",
         "tool_input": {"command": "chmod 777 /tmp/file"},
     }
-    with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "save_shown") as mock_save:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 2
+    assert run_main_with_payload(payload) == 2
     # Blocks bypass the dedup state entirely — enforcement is never deduped.
     mock_save.assert_not_called()
 
@@ -213,12 +214,8 @@ def test_main_blocks_repeated_dangerous_command(capsys):
         "tool_input": {"command": command},
     }
     warning_key = f"chmod_777:{hashlib.sha256(command.encode('utf-8')).hexdigest()}"
-    with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value={warning_key}):
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 2
+    with patch.object(security_guard, "load_shown", return_value={warning_key}):
+        assert run_main_with_payload(payload) == 2
     captured = capsys.readouterr()
     assert "BLOCKED" in captured.err
 
@@ -227,25 +224,18 @@ def test_main_blocks_repeated_dangerous_command(capsys):
 def test_main_handles_non_dict_tool_input(bad_tool_input):
     # A non-object tool_input (null/string/number/list) must not crash the hook.
     payload = {"session_id": "s", "tool_name": "Bash", "tool_input": bad_tool_input}
-    with patch("sys.stdin.read", return_value=json.dumps(payload)):
-        with pytest.raises(SystemExit) as exc:
-            main()
-    assert exc.value.code == 0
+    assert run_main_with_payload(payload) == 0
 
 
-def test_main_warns_dangerous_bash_command(capsys):
+@patch.object(security_guard, "load_shown", return_value=set())
+@patch.object(security_guard, "save_shown")
+def test_main_warns_dangerous_bash_command(mock_save, mock_load, capsys):
     payload = {
         "session_id": "test_session",
         "tool_name": "Bash",
         "tool_input": {"command": "printenv"},
     }
-    with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value=set()) as mock_load, \
-         patch.object(security_guard, "save_shown") as mock_save:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
+    assert run_main_with_payload(payload) == 0
     mock_load.assert_called_once_with("test_session", security_guard.STATE_PREFIX)
     mock_save.assert_called_once()
 
@@ -253,7 +243,8 @@ def test_main_warns_dangerous_bash_command(capsys):
     assert "WARNING: Dumping full environment may expose secrets" in captured.err
 
 
-def test_main_deduplicates_warnings(capsys):
+@patch.object(security_guard, "save_shown")
+def test_main_deduplicates_warnings(mock_save, capsys):
     payload = {
         "session_id": "test_session",
         "tool_name": "Bash",
@@ -263,13 +254,8 @@ def test_main_deduplicates_warnings(capsys):
     warning_key = f"expose_env:{hashlib.sha256(command.encode('utf-8')).hexdigest()}"
     shown_set = {warning_key}
 
-    with patch("sys.stdin.read", return_value=json.dumps(payload)), \
-         patch.object(security_guard, "load_shown", return_value=shown_set) as mock_load, \
-         patch.object(security_guard, "save_shown") as mock_save:
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
+    with patch.object(security_guard, "load_shown", return_value=shown_set) as mock_load:
+        assert run_main_with_payload(payload) == 0
     mock_load.assert_called_once()
     mock_save.assert_not_called()
 
@@ -283,11 +269,7 @@ def test_main_ignores_non_bash_tools(capsys):
         "tool_name": "Write",
         "tool_input": {"content": "chmod 777 /tmp/file"},
     }
-    with patch("sys.stdin.read", return_value=json.dumps(payload)):
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
+    assert run_main_with_payload(payload) == 0
 
 
 def test_main_ignores_empty_command(capsys):
@@ -296,11 +278,7 @@ def test_main_ignores_empty_command(capsys):
         "tool_name": "Bash",
         "tool_input": {"command": ""},
     }
-    with patch("sys.stdin.read", return_value=json.dumps(payload)):
-        with pytest.raises(SystemExit) as exc:
-            main()
-
-    assert exc.value.code == 0
+    assert run_main_with_payload(payload) == 0
 
 
 @pytest.mark.parametrize(
