@@ -155,10 +155,11 @@ def _shell_split(segment):
     keep their spaces and lose their quotes, mirroring how the shell builds argv.
     Not a full shell parser (no variable/glob expansion).
     """
-    words, buf, quote, had = [], [], None, False
-    i, n = 0, len(segment)
-    while i < n:
-        c = segment[i]
+    words, buf = [], []
+    quote, had = None, False
+
+    chars = iter(segment)
+    for c in chars:
         if quote == "'":
             if c == "'":
                 quote = None
@@ -166,28 +167,31 @@ def _shell_split(segment):
                 buf.append(c)
         elif quote == '"':
             # Inside double quotes Bash only treats \ as an escape before " \ $ `.
-            if c == "\\" and i + 1 < n and segment[i + 1] in ('"', "\\", "$", "`"):
-                buf.append(segment[i + 1])
-                i += 2
-                continue
-            if c == '"':
+            if c == "\\" and (next_c := next(chars, None)) is not None:
+                if next_c in ('"', "\\", "$", "`"):
+                    buf.append(next_c)
+                else:
+                    buf.extend([c, next_c])
+            elif c == '"':
                 quote = None
             else:
                 buf.append(c)
-        elif c == "\\" and i + 1 < n:
-            buf.append(segment[i + 1])            # unquoted escape -> literal next char
-            i += 2
-            continue
+        elif c == "\\":
+            if (next_c := next(chars, None)) is not None:
+                buf.append(next_c)
+            else:
+                buf.append(c)
         elif c in ("'", '"'):
             quote = c
-            had = True                            # an (even empty) quoted section is a word
+            had = True
         elif c.isspace():
             if had or buf:
                 words.append("".join(buf))
-                buf, had = [], False
+                buf.clear()
+                had = False
         else:
             buf.append(c)
-        i += 1
+
     if had or buf:
         words.append("".join(buf))
     return words
