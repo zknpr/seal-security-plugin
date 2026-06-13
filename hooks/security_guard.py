@@ -231,6 +231,30 @@ def _rm_invocation_index(words):
     return None
 
 
+def _parse_rm_args(args):
+    """Parse rm arguments into (recursive, force, targets)."""
+    recursive = force = options_ended = False
+    targets = []
+    for w in args:
+        if not options_ended and w == "--":
+            options_ended = True  # everything after `--` is an operand
+        elif not options_ended and w.startswith("--") and len(w) > 2:
+            # GNU rm accepts unambiguous abbreviations (--rec == --recursive),
+            # but --recursive/--force take NO value: --force=no and --=x are
+            # option errors that abort before deleting, so they must not set
+            # the flags (an empty prefix would otherwise match every option).
+            opt = w[2:]
+            if opt and "=" not in opt:
+                recursive |= "recursive".startswith(opt)
+                force |= "force".startswith(opt)
+        elif not options_ended and w.startswith("-") and len(w) > 1:
+            recursive |= "r" in w or "R" in w
+            force |= "f" in w
+        else:
+            targets.append(_normalize_rm_target(w))
+    return recursive, force, targets
+
+
 def _is_dangerous_rm(command):
     """True if `command` recursively force-deletes a filesystem/home root.
 
@@ -251,25 +275,9 @@ def _is_dangerous_rm(command):
         rm_at = _rm_invocation_index(words)
         if rm_at is None:
             continue
-        recursive = force = options_ended = False
-        targets = []
-        for w in words[rm_at + 1:]:
-            if not options_ended and w == "--":
-                options_ended = True  # everything after `--` is an operand
-            elif not options_ended and w.startswith("--") and len(w) > 2:
-                # GNU rm accepts unambiguous abbreviations (--rec == --recursive),
-                # but --recursive/--force take NO value: --force=no and --=x are
-                # option errors that abort before deleting, so they must not set
-                # the flags (an empty prefix would otherwise match every option).
-                opt = w[2:]
-                if opt and "=" not in opt:
-                    recursive |= "recursive".startswith(opt)
-                    force |= "force".startswith(opt)
-            elif not options_ended and w.startswith("-") and len(w) > 1:
-                recursive |= "r" in w or "R" in w
-                force |= "f" in w
-            else:
-                targets.append(_normalize_rm_target(w))
+
+        recursive, force, targets = _parse_rm_args(words[rm_at + 1:])
+
         if recursive and force and any(_RM_ROOT_TOKEN.match(t) for t in targets):
             return True
     return False
