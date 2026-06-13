@@ -7,6 +7,7 @@ import pytest
 import security_guard
 from security_guard import (
     _collapse_path,
+    _rm_invocation_index,
     _shell_split,
     _split_subcommands,
     check_command,
@@ -349,3 +350,40 @@ def test_split_subcommands_keeps_escaped_quote_inside_string():
 
 def test_split_subcommands_splits_on_unquoted_separator():
     assert _split_subcommands("rm -rf /etc; echo ok") == ["rm -rf /etc", " echo ok"]
+
+
+@pytest.mark.parametrize(
+    ("words", "expected_index"),
+    [
+        # Basic rm cases in command position
+        (["rm", "-rf", "/"], 0),
+        (["/bin/rm", "-rf", "/"], 0),
+        (["\\rm", "-rf", "/"], 0),
+
+        # rm behind wrappers and prefixes
+        (["sudo", "rm", "-rf", "/"], 1),
+        (["env", "rm", "-rf", "/"], 1),
+        (["time", "sudo", "rm"], 2),
+        (["if", "rm"], 1),
+        (["{", "rm"], 1),
+        (["!", "rm"], 1),
+
+        # rm behind environment variable assignments
+        (["FOO=bar", "rm", "-rf", "/"], 1),
+        (["FOO=bar", "BAZ=qux", "rm"], 2),
+        (["sudo", "FOO=bar", "env", "rm"], 3),
+
+        # rm in argument position (not a delete command)
+        (["echo", "rm", "-rf", "/"], None),
+        (["ls", "/bin/rm"], None),
+        (["sudo", "echo", "rm"], None),
+
+        # Incomplete commands / no rm
+        ([], None),
+        (["sudo"], None),
+        (["FOO=bar"], None),
+        (["sudo", "env", "FOO=bar"], None),
+    ],
+)
+def test_rm_invocation_index(words, expected_index):
+    assert _rm_invocation_index(words) == expected_index
