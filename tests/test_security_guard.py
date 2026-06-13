@@ -7,6 +7,7 @@ import pytest
 import security_guard
 from security_guard import (
     _collapse_path,
+    _is_rm_word,
     _shell_split,
     _split_subcommands,
     check_command,
@@ -319,6 +320,26 @@ def test_main_ignores_empty_command(capsys):
 )
 def test_shell_split_is_quote_and_escape_aware(segment, expected):
     assert _shell_split(segment) == expected
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("rm", True),
+        ("/bin/rm", True),
+        ("/usr/bin/rm", True),
+        ("\\rm", True),
+        ("\\\\rm", True),
+        ("rmdir", False),
+        ("arm", False),
+        ("rm-rf", False),
+        ("rmm", False),
+        ("something/rm", True),
+        ("something/rmm", False),
+    ],
+)
+def test_is_rm_word(word, expected):
+    assert _is_rm_word(word) == expected
 
 
 @pytest.mark.parametrize(
