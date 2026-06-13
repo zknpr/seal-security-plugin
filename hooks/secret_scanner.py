@@ -324,7 +324,7 @@ def scan_content(content, file_path):
             # a security boundary — use the line-bound `seal-allow-secret` marker
             # for guaranteed allowlisting.
             elif exclude and exclude.search(
-                content[max(0, match.start() - 100):min(len(content), match.end() + 100)]
+                content, max(0, match.start() - 100), match.end() + 100
             ):
                 pass
             # For API assignments, placeholder words only suppress the match when
