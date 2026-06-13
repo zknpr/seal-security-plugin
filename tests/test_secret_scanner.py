@@ -211,7 +211,7 @@ def test_scan_content_respects_allowlist_marker():
 
 def test_scan_content_exclude_does_not_mask_later_match():
     # A first match suppressed by `exclude` must not hide a later real match of
-    # the same rule (same multi-match masking bug, via the exclude path).
+    # the same rule (regression: multi-match masking via the exclude path).
     mock_patterns = [{
         "name": "ex_rule",
         "pattern": re.compile(r"HIT"),
