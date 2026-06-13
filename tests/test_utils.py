@@ -194,7 +194,7 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
     # raise UnicodeEncodeError on write; debug_log must swallow it rather than
     # let it propagate and crash the hook before rule evaluation.
     # SEAL_DEBUG must be set or debug_log returns early and never exercises the write.
-    monkeypatch.setenv("SEAL_DEBUG", "1")
+    monkeypatch.setattr(utils, "IS_DEBUG", True)
     log_file = tmp_path / "debug.log"
     debug_log("payload \ud800 end", str(log_file))
 
@@ -202,7 +202,7 @@ def test_debug_log_never_raises_on_unencodable_text(tmp_path, monkeypatch):
 def test_debug_log_happy_path(tmp_path, monkeypatch):
     # With SEAL_DEBUG enabled, debug_log writes the message with a timestamp
     # prefix to the requested log file.
-    monkeypatch.setenv("SEAL_DEBUG", "1")
+    monkeypatch.setattr(utils, "IS_DEBUG", True)
     log_file = tmp_path / "debug.log"
     debug_log("hello test", str(log_file))
 
@@ -215,7 +215,7 @@ def test_debug_log_happy_path(tmp_path, monkeypatch):
 def test_debug_log_disabled_by_default(tmp_path, monkeypatch):
     # By default (SEAL_DEBUG unset) debug_log returns early without creating
     # the file or writing anything — the opt-in default keeps logging off.
-    monkeypatch.delenv("SEAL_DEBUG", raising=False)
+    monkeypatch.setattr(utils, "IS_DEBUG", False)
     log_file = tmp_path / "debug_disabled.log"
     debug_log("this should not be logged", str(log_file))
 
