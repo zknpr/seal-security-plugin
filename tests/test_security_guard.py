@@ -7,6 +7,7 @@ import pytest
 import security_guard
 from security_guard import (
     _collapse_path,
+    _normalize_rm_target,
     _shell_split,
     _split_subcommands,
     check_command,
@@ -339,6 +340,23 @@ def test_shell_split_is_quote_and_escape_aware(segment, expected):
 )
 def test_collapse_path_resolves_traversal(token, expected):
     assert _collapse_path(token) == expected
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ('""', ""),                           # empty quotes
+        ('"/"', "/"),                         # double quotes removed
+        ("'/'", "/"),                         # single quotes removed
+        ('"${HOME}/foo"', "$HOME/foo"),       # brace expansion normalized
+        ('//var/log', "/var/log"),            # leading double slashes stripped
+        ('///var///log', "/var/log"),         # leading slashes condensed by regex, internal ones by collapse_path
+        ('"${HOME}/../etc"', "/etc"),         # combines brace replace + path collapse
+        ('"/var/../log"', "/log"),            # combines quote replace + path collapse
+    ],
+)
+def test_normalize_rm_target(token, expected):
+    assert _normalize_rm_target(token) == expected
 
 
 def test_split_subcommands_keeps_escaped_quote_inside_string():
