@@ -103,8 +103,46 @@ def test_save_shown_creates_owner_only_state_file(mock_expanduser):
     save_shown("perm-test", "seal_guard_state", {"k"})
 
     path = get_state_file("perm-test", "seal_guard_state")
+    if os.name != "nt":  # POSIX permission bits aren't meaningful on Windows
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        assert mode & 0o077 == 0, f"state file is group/other-accessible: {oct(mode)}"
+
+
+def test_save_shown_retightens_existing_world_readable_state_file(mock_expanduser):
+    # Upgrade case: a state file written 0o644 by an older version must not stay
+    # group/other-readable. os.open's mode only applies on creation, so save_shown
+    # re-tightens an existing file to 0o600 via fchmod (see _owner_only_opener).
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits not meaningful on Windows")
+    path = get_state_file("retighten", "seal_guard_state")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("[]")
+    os.chmod(path, 0o644)
+    assert stat.S_IMODE(os.stat(path).st_mode) & 0o077 != 0  # precondition: loose
+
+    save_shown("retighten", "seal_guard_state", {"x"})
+
     mode = stat.S_IMODE(os.stat(path).st_mode)
-    assert mode & 0o077 == 0, f"state file is group/other-accessible: {oct(mode)}"
+    assert mode & 0o077 == 0, f"existing state file not re-tightened: {oct(mode)}"
+
+
+def test_debug_log_retightens_existing_world_readable_log(tmp_path, monkeypatch):
+    # debug_log shares the owner-only opener with save_shown, so a log left 0o644
+    # by an older version must likewise be re-tightened to owner-only. Independent
+    # of the save_shown test so a regression in either call site is caught.
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits not meaningful on Windows")
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "seal.log"
+    log_file.write_text("old line from a prior version\n")
+    os.chmod(log_file, 0o644)
+    assert stat.S_IMODE(os.stat(log_file).st_mode) & 0o077 != 0  # precondition: loose
+
+    debug_log("hello", str(log_file))
+
+    mode = stat.S_IMODE(os.stat(log_file).st_mode)
+    assert mode & 0o077 == 0, f"existing log not re-tightened: {oct(mode)}"
 
 
 def test_save_shown_oserror_without_log_file(mock_expanduser):

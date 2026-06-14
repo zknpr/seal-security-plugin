@@ -15,6 +15,25 @@ from datetime import datetime
 _SAFE_SESSION_ID_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
+def _owner_only_opener(path, flags):
+    """``open()`` opener that creates files 0o600 and re-tightens existing ones.
+
+    ``os.open``'s mode argument only applies when the file is newly created, so a
+    file left group/other-readable by an older version (plain ``open`` -> ~0o644)
+    would keep that mode; ``fchmod`` re-tightens it to owner-only. Both are
+    best-effort: ``fchmod`` is absent on Windows and may fail on exotic
+    filesystems, and the file still opens (these perms are hardening, not
+    correctness). Going through ``open(..., opener=...)`` also lets ``open()`` own
+    the fd lifecycle, so the descriptor can't leak if the text wrapper raises.
+    """
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except (AttributeError, OSError):
+        pass
+    return fd
+
+
 def debug_log(msg, log_file):
     """Append a timestamped debug message to the requested hook log file."""
     # Opt-in only: the debug log persists plaintext file-path fragments, so it
@@ -31,12 +50,10 @@ def debug_log(msg, log_file):
         dirname = os.path.dirname(log_file)
         if dirname:  # skip makedirs("") for a bare filename (would raise)
             os.makedirs(dirname, exist_ok=True)
-        # Create the log 0o600 (owner-only) and UTF-8: it persists plaintext
-        # path/rule fragments, so this security tool must not leave it world-
-        # readable. os.open sets the mode atomically on creation (an existing
-        # file keeps its perms); the O_APPEND fd is wrapped for text writes.
-        fd = os.open(log_file, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
+        # Owner-only (0o600) + UTF-8: the log persists plaintext path/rule
+        # fragments, so this security tool must not leave it world-readable.
+        # _owner_only_opener also re-tightens a pre-existing (e.g. 0o644) log.
+        with open(log_file, "a", encoding="utf-8", opener=_owner_only_opener) as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
@@ -93,11 +110,10 @@ def save_shown(session_id, prefix, shown, log_file=None):
     path = get_state_file(session_id, prefix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Owner-only (0o600) + UTF-8: the state file lives under ~/.claude, so
-        # least-privilege by default. O_TRUNC replaces the prior content (save
-        # writes the full set each time).
-        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # Owner-only (0o600) + UTF-8 under ~/.claude; least-privilege by default.
+        # "w" truncates to replace the full set; _owner_only_opener re-tightens a
+        # pre-existing (e.g. 0o644) state file too.
+        with open(path, "w", encoding="utf-8", opener=_owner_only_opener) as f:
             json.dump(list(shown), f)
     except OSError as e:
         if log_file is not None:
