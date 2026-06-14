@@ -7,6 +7,9 @@ import pytest
 import security_guard
 from security_guard import (
     _collapse_path,
+    _is_rm_word,
+    _normalize_rm_target,
+    _rm_invocation_index,
     _shell_split,
     _split_subcommands,
     check_command,
@@ -349,3 +352,73 @@ def test_split_subcommands_keeps_escaped_quote_inside_string():
 
 def test_split_subcommands_splits_on_unquoted_separator():
     assert _split_subcommands("rm -rf /etc; echo ok") == ["rm -rf /etc", " echo ok"]
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("rm", True),
+        ("/bin/rm", True),
+        ("/usr/bin/rm", True),
+        ("\\rm", True),
+        ("\\\\rm", True),
+        ("rmdir", False),
+        ("arm", False),
+        ("rm-rf", False),
+        ("rmm", False),
+        ("something/rm", True),
+        ("something/rmm", False),
+    ],
+)
+def test_is_rm_word(word, expected):
+    assert _is_rm_word(word) == expected
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ('""', ""),                       # empty quotes collapse to empty token
+        ('"/"', "/"),                     # double quotes removed
+        ("'/'", "/"),                     # single quotes removed
+        ('"${HOME}/foo"', "$HOME/foo"),   # ${HOME} brace syntax normalized to $HOME
+        ("//var/log", "/var/log"),        # repeated leading slashes condensed
+        ("///var///log", "/var/log"),     # leading via regex, internal via _collapse_path
+        ('"${HOME}/../etc"', "/etc"),     # brace replace + climb above home -> root
+        ('"/var/../log"', "/log"),        # quote replace + .. collapse
+    ],
+)
+def test_normalize_rm_target(token, expected):
+    assert _normalize_rm_target(token) == expected
+
+
+@pytest.mark.parametrize(
+    ("words", "expected_index"),
+    [
+        # rm in command position
+        (["rm", "-rf", "/"], 0),
+        (["/bin/rm", "-rf", "/"], 0),
+        (["\\rm", "-rf", "/"], 0),
+        # rm behind known launchers / reserved words
+        (["sudo", "rm", "-rf", "/"], 1),
+        (["env", "rm", "-rf", "/"], 1),
+        (["time", "sudo", "rm"], 2),
+        (["if", "rm"], 1),
+        (["{", "rm"], 1),
+        (["!", "rm"], 1),
+        # rm behind VAR=val assignments
+        (["FOO=bar", "rm", "-rf", "/"], 1),
+        (["FOO=bar", "BAZ=qux", "rm"], 2),
+        (["sudo", "FOO=bar", "env", "rm"], 3),
+        # rm only in argument position is not a delete
+        (["echo", "rm", "-rf", "/"], None),
+        (["ls", "/bin/rm"], None),
+        (["sudo", "echo", "rm"], None),
+        # no rm present / incomplete
+        ([], None),
+        (["sudo"], None),
+        (["FOO=bar"], None),
+        (["sudo", "env", "FOO=bar"], None),
+    ],
+)
+def test_rm_invocation_index(words, expected_index):
+    assert _rm_invocation_index(words) == expected_index

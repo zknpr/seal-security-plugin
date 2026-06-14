@@ -1,11 +1,24 @@
 import json
 import os
+import stat
 from unittest.mock import patch
 
 import pytest
 
 import utils
 from utils import debug_log, get_state_file, load_shown, read_hook_input, save_shown
+
+
+@pytest.fixture
+def mock_expanduser(tmp_path, monkeypatch):
+    """Redirect ``~`` expansion into a temp dir so the state-file helpers stay
+    isolated. Returns the temp dir so tests can assert against the real paths."""
+    monkeypatch.setattr(
+        os.path,
+        "expanduser",
+        lambda path: str(tmp_path / path.removeprefix("~/")),
+    )
+    return tmp_path
 
 
 def test_get_state_file_sanitizes_session_id_path_traversal():
@@ -22,12 +35,7 @@ def test_get_state_file_preserves_safe_session_id_characters():
     assert path == os.path.expanduser("~/.claude/.seal_guard_state_abc-DEF_123.json")
 
 
-def test_load_shown_happy_path(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_load_shown_happy_path(mock_expanduser):
     shown_list = ["item1", "item2"]
     path = get_state_file("test-session", "test_prefix")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -37,21 +45,11 @@ def test_load_shown_happy_path(tmp_path, monkeypatch):
     assert load_shown("test-session", "test_prefix") == {"item1", "item2"}
 
 
-def test_load_shown_returns_empty_set_when_file_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_load_shown_returns_empty_set_when_file_missing(mock_expanduser):
     assert load_shown("missing-file", "seal_guard_state") == set()
 
 
-def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_load_shown_returns_empty_set_for_non_iterable_json(mock_expanduser):
     path = get_state_file("bad-shape", "seal_guard_state")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -60,12 +58,7 @@ def test_load_shown_returns_empty_set_for_non_iterable_json(tmp_path, monkeypatc
     assert load_shown("bad-shape", "seal_guard_state") == set()
 
 
-def test_load_shown_returns_empty_set_for_invalid_json(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_load_shown_returns_empty_set_for_invalid_json(mock_expanduser):
     path = get_state_file("invalid-json", "seal_guard_state")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -74,12 +67,7 @@ def test_load_shown_returns_empty_set_for_invalid_json(tmp_path, monkeypatch):
     assert load_shown("invalid-json", "seal_guard_state") == set()
 
 
-def test_load_shown_handles_oserror(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_load_shown_handles_oserror(mock_expanduser, monkeypatch):
     path = get_state_file("oserror", "seal_guard_state")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -95,12 +83,7 @@ def test_load_shown_handles_oserror(tmp_path, monkeypatch):
         assert load_shown("oserror", "seal_guard_state") == set()
 
 
-def test_save_shown_happy_path(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_save_shown_happy_path(mock_expanduser):
     shown = {"item1", "item2"}
     save_shown("test-session", "test_prefix", shown)
 
@@ -111,25 +94,26 @@ def test_save_shown_happy_path(tmp_path, monkeypatch):
     assert set(data) == shown
 
 
-def test_save_shown_oserror_without_log_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
+def test_save_shown_creates_owner_only_state_file(mock_expanduser):
+    # The state file holds per-session warning keys under ~/.claude; it must be
+    # created without group/other access — a security tool should practice the
+    # least-privilege file perms it enforces elsewhere. os.open(0o600) carries no
+    # group/other bits regardless of umask, so a regression back to a plain
+    # open() (0o644-ish) would set those bits and fail this assertion.
+    save_shown("perm-test", "seal_guard_state", {"k"})
 
+    path = get_state_file("perm-test", "seal_guard_state")
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    assert mode & 0o077 == 0, f"state file is group/other-accessible: {oct(mode)}"
+
+
+def test_save_shown_oserror_without_log_file(mock_expanduser):
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         # Should not raise
         save_shown("test-session", "test_prefix", {"item"})
 
 
-def test_save_shown_oserror_with_log_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os.path,
-        "expanduser",
-        lambda path: str(tmp_path / path.removeprefix("~/")),
-    )
-
+def test_save_shown_oserror_with_log_file(mock_expanduser, tmp_path):
     log_file = str(tmp_path / "test.log")
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         with patch("utils.debug_log") as mock_debug_log:
@@ -220,3 +204,25 @@ def test_debug_log_disabled_by_default(tmp_path, monkeypatch):
     debug_log("this should not be logged", str(log_file))
 
     assert not os.path.exists(log_file)
+
+
+def test_debug_log_swallows_oserror_on_makedirs(tmp_path, monkeypatch):
+    # Never crash the hook: an OSError from makedirs (e.g. an unwritable parent)
+    # is swallowed by debug_log's catch-all, leaving no log file behind.
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "subdir" / "debug.log"
+    with patch("os.makedirs", side_effect=OSError("Permission denied")):
+        debug_log("nope", str(log_file))  # must not raise
+
+    assert not log_file.exists()
+
+
+def test_debug_log_swallows_oserror_on_open(tmp_path, monkeypatch):
+    # debug_log opens the log 0o600 via os.open; an OSError there (e.g. permission
+    # denied) is also swallowed rather than propagated to the hook.
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "debug.log"
+    with patch("os.open", side_effect=OSError("Permission denied")):
+        debug_log("nope", str(log_file))  # must not raise
+
+    assert not log_file.exists()
