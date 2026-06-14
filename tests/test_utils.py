@@ -127,6 +127,24 @@ def test_save_shown_retightens_existing_world_readable_state_file(mock_expanduse
     assert mode & 0o077 == 0, f"existing state file not re-tightened: {oct(mode)}"
 
 
+def test_debug_log_retightens_existing_world_readable_log(tmp_path, monkeypatch):
+    # debug_log shares the owner-only opener with save_shown, so a log left 0o644
+    # by an older version must likewise be re-tightened to owner-only. Independent
+    # of the save_shown test so a regression in either call site is caught.
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits not meaningful on Windows")
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "seal.log"
+    log_file.write_text("old line from a prior version\n")
+    os.chmod(log_file, 0o644)
+    assert stat.S_IMODE(os.stat(log_file).st_mode) & 0o077 != 0  # precondition: loose
+
+    debug_log("hello", str(log_file))
+
+    mode = stat.S_IMODE(os.stat(log_file).st_mode)
+    assert mode & 0o077 == 0, f"existing log not re-tightened: {oct(mode)}"
+
+
 def test_save_shown_oserror_without_log_file(mock_expanduser):
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         # Should not raise
