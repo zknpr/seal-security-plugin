@@ -31,7 +31,12 @@ def debug_log(msg, log_file):
         dirname = os.path.dirname(log_file)
         if dirname:  # skip makedirs("") for a bare filename (would raise)
             os.makedirs(dirname, exist_ok=True)
-        with open(log_file, "a") as f:
+        # Create the log 0o600 (owner-only) and UTF-8: it persists plaintext
+        # path/rule fragments, so this security tool must not leave it world-
+        # readable. os.open sets the mode atomically on creation (an existing
+        # file keeps its perms); the O_APPEND fd is wrapped for text writes.
+        fd = os.open(log_file, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
@@ -76,7 +81,7 @@ def load_shown(session_id, prefix):
     path = get_state_file(session_id, prefix)
     if os.path.exists(path):
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return set(json.load(f))
         except (json.JSONDecodeError, OSError, TypeError):
             return set()
@@ -88,7 +93,11 @@ def save_shown(session_id, prefix, shown, log_file=None):
     path = get_state_file(session_id, prefix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        # Owner-only (0o600) + UTF-8: the state file lives under ~/.claude, so
+        # least-privilege by default. O_TRUNC replaces the prior content (save
+        # writes the full set each time).
+        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(list(shown), f)
     except OSError as e:
         if log_file is not None:
