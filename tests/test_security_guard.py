@@ -69,6 +69,12 @@ def test_check_command_allows_safe_commands(command):
         ("cat secrets.json", "read_secrets"),
         ("less id_rsa", "read_secrets"),
         ("bat credentials", "read_secrets"),
+        ("/bin/cat credentials", "read_secrets"),
+        ("cat -n credentials", "read_secrets"),
+        ("sudo cat id_rsa", "read_secrets"),
+        ("cat foo.txt id_rsa", "read_secrets"),
+        ("echo cat credentials", None), # echo prints 'cat credentials', doesn't run it
+        ("cat non_secret.txt", None),
         ("npm install left-pad", "npm_install_unfrozen"),
         ("pip install https://github.com/acme/pkg", "install_github_url"),
         ("sudo systemctl restart sshd", "sudo_sensitive"),
@@ -120,7 +126,10 @@ def test_check_command_reports_each_security_rule(command, expected_rule):
     rule_name, message, _ = check_command(command)
 
     assert rule_name == expected_rule
-    assert "SEAL" in message
+    if expected_rule is not None:
+        assert "SEAL" in message
+    else:
+        assert message is None
 
 
 @pytest.mark.parametrize(

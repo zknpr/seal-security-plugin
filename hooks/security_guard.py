@@ -231,6 +231,46 @@ def _rm_invocation_index(words):
     return None
 
 
+_READ_COMMANDS = frozenset({"cat", "less", "more", "head", "tail", "bat"})
+
+_SECRET_FILE_RE = re.compile(
+    r"^(\.env\b|\.env\.|credentials|secret|private[_-]?key|\.pem\b|\.key\b"
+    r"|seed\.txt|mnemonic|keystore|\.p12\b|\.pfx\b|id_rsa\b|id_ed25519\b)",
+    re.IGNORECASE,
+)
+
+def _is_reading_secrets(command):
+    """True if `command` uses a pager/cat tool to read a sensitive file.
+
+    Parses the command to avoid ReDoS from naive `.*` regex matching, which would
+    fail on long arguments (like an embedded script or base64 payload).
+    """
+    # Fast-path: avoid parsing if no read command is present anywhere
+    if not any(cmd in command for cmd in _READ_COMMANDS):
+        return False
+
+    for sub in _split_subcommands(command):
+        words = _shell_split(sub)
+        read_idx = None
+        for i, w in enumerate(words):
+            # Check if command is cat/less/more/etc. or /bin/cat
+            base = os.path.basename(w)
+            if base in _READ_COMMANDS:
+                read_idx = i
+                break
+            if w in _RM_WRAPPERS or w in _RM_PREFIX_KEYWORDS or _ENV_ASSIGNMENT.match(w):
+                continue
+            break
+
+        if read_idx is not None:
+            # Command found; check if any subsequent non-flag argument is a secret file
+            for w in words[read_idx + 1:]:
+                if not w.startswith("-") and _SECRET_FILE_RE.search(os.path.basename(w)):
+                    return True
+
+    return False
+
+
 def _is_dangerous_rm(command):
     """True if `command` recursively force-deletes a filesystem/home root.
 
@@ -357,12 +397,7 @@ RULES = [
     # --- Cat/read sensitive credential files ---
     {
         "name": "read_secrets",
-        "pattern": re.compile(
-            r"(cat|less|more|head|tail|bat)\s+.*"
-            r"(\.env\b|\.env\.|credentials|secret|private[_-]?key|\.pem\b|\.key\b"
-            r"|seed\.txt|mnemonic|keystore|\.p12\b|\.pfx\b|id_rsa\b|id_ed25519\b)",
-            re.IGNORECASE,
-        ),
+        "check": _is_reading_secrets,
         "message": (
             "[SEAL] WARNING: Reading potential credential/secret file.\n"
             "Ensure this file is .gitignored and contents are not logged or exposed.\n"
