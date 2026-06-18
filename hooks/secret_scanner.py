@@ -89,12 +89,9 @@ def _looks_like_seed_phrase(text):
         return True
     run = 0
     for word in text.split():
-        if word in BIP39_WORDS:
-            run += 1
-            if run >= 12:
-                return True
-        else:
-            run = 0
+        run = run + 1 if word in BIP39_WORDS else 0
+        if run >= 12:
+            return True
     return False
 
 # Pattern definitions: (name, regex, message, block?)
