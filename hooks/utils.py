@@ -26,6 +26,7 @@ def _owner_only_opener(path, flags):
     correctness). Going through ``open(..., opener=...)`` also lets ``open()`` own
     the fd lifecycle, so the descriptor can't leak if the text wrapper raises.
     """
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags, 0o600)
     try:
         os.fchmod(fd, 0o600)
