@@ -288,7 +288,7 @@ RULES = [
         "name": "pipe_to_shell",
         "block": True,
         "pattern": re.compile(
-            r"(curl|wget|fetch)\s+.*\|\s*(sh|bash|zsh|python|python3|node|ruby|perl)",
+            r"(curl|wget|fetch)\s[^|]*\|\s*(sh|bash|zsh|python|python3|node|ruby|perl)",
             re.IGNORECASE,
         ),
         "message": (
