@@ -264,3 +264,18 @@ def test_debug_log_swallows_oserror_on_open(tmp_path, monkeypatch):
         debug_log("nope", str(log_file))  # must not raise
 
     assert not log_file.exists()
+
+def test_load_shown_handles_typeerror(mock_expanduser, monkeypatch):
+    path = get_state_file("typeerror_test", "seal_guard_state")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write('["test"]')
+
+    import json
+
+    def mock_load(*args, **kwargs):
+        raise TypeError("mocked TypeError")
+
+    with monkeypatch.context() as m:
+        m.setattr(json, "load", mock_load)
+        assert load_shown("typeerror_test", "seal_guard_state") == set()
