@@ -264,3 +264,19 @@ def test_debug_log_swallows_oserror_on_open(tmp_path, monkeypatch):
         debug_log("nope", str(log_file))  # must not raise
 
     assert not log_file.exists()
+
+def test_debug_log_swallows_generic_exception(tmp_path, monkeypatch):
+    # debug_log has a catch-all exception block to ensure the hook never crashes.
+    # We can trigger this by mocking datetime.now() to raise an Exception.
+    monkeypatch.setenv("SEAL_DEBUG", "1")
+    log_file = tmp_path / "debug.log"
+
+    class MockDatetime:
+        @staticmethod
+        def now():
+            raise Exception("Generic error")
+
+    monkeypatch.setattr(utils, "datetime", MockDatetime)
+    debug_log("nope", str(log_file))  # must not raise
+
+    assert not log_file.exists()
