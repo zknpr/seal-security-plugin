@@ -255,6 +255,21 @@ def test_debug_log_swallows_oserror_on_makedirs(tmp_path, monkeypatch):
     assert not log_file.exists()
 
 
+def test_owner_only_opener_rejects_symlinks(tmp_path):
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("O_NOFOLLOW is not supported on this platform")
+
+    target = tmp_path / "target.txt"
+    sym = tmp_path / "sym.txt"
+    target.write_text("hello")
+    os.symlink(target, sym)
+
+    with pytest.raises(OSError):
+        # We simulate the exact call `open` makes internally:
+        fd = utils._owner_only_opener(str(sym), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.close(fd)
+
+
 def test_debug_log_swallows_oserror_on_open(tmp_path, monkeypatch):
     # debug_log opens the log 0o600 via os.open; an OSError there (e.g. permission
     # denied) is also swallowed rather than propagated to the hook.
