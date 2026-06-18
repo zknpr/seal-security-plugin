@@ -264,3 +264,23 @@ def test_debug_log_swallows_oserror_on_open(tmp_path, monkeypatch):
         debug_log("nope", str(log_file))  # must not raise
 
     assert not log_file.exists()
+
+def test_owner_only_opener_fchmod_attributeerror(tmp_path, monkeypatch):
+    # Test that _owner_only_opener silently catches AttributeError
+    # (e.g. if os.fchmod doesn't exist on the platform like Windows)
+    path = tmp_path / "test_attr.txt"
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    fd = utils._owner_only_opener(str(path), os.O_CREAT | os.O_WRONLY)
+    assert fd >= 0
+    os.close(fd)
+
+def test_owner_only_opener_fchmod_oserror(tmp_path, monkeypatch):
+    # Test that _owner_only_opener silently catches OSError
+    # (e.g. if fchmod fails on an exotic filesystem)
+    path = tmp_path / "test_oserr.txt"
+    def mock_fchmod(*args, **kwargs):
+        raise OSError("fchmod failed")
+    monkeypatch.setattr(os, "fchmod", mock_fchmod, raising=False)
+    fd = utils._owner_only_opener(str(path), os.O_CREAT | os.O_WRONLY)
+    assert fd >= 0
+    os.close(fd)
