@@ -301,7 +301,7 @@ RULES = [
     {
         "name": "chmod_777",
         "block": True,
-        "pattern": re.compile(r"chmod\s+(-[a-zA-Z]+\s+)*777\b"),
+        "pattern": re.compile(r"chmod(?:\s+-[a-zA-Z]+)*\s+777\b"),
         "message": (
             "[SEAL] BLOCKED: chmod 777 grants read/write/execute to everyone.\n"
             "Use least-privilege permissions: chmod 755 for dirs, 644 for files, 600 for secrets.\n"
