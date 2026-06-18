@@ -396,7 +396,7 @@ RULES = [
     {
         "name": "sudo_sensitive",
         "pattern": re.compile(
-            r"sudo\s+.*(rm\s+-rf|chmod|chown|mv\s+/|cp\s+/|dd\s+|mkfs|fdisk|iptables|systemctl)",
+            r"\bsudo\s+(?:[^\s;&|]+\s+)*['\"]?(?:rm\s+-rf|chmod\b|chown\b|mv\s+/|cp\s+/|dd\s+|mkfs\b|fdisk\b|iptables\b|systemctl\b)",
             re.IGNORECASE,
         ),
         "message": (
