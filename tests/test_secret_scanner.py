@@ -6,7 +6,7 @@ import pytest
 
 import secret_scanner
 from secret_scanner import (
-    _matched_line,
+    _line_contains,
     extract_content,
     is_env_file,
     main,
@@ -15,22 +15,24 @@ from secret_scanner import (
 
 
 @pytest.mark.parametrize(
-    ("content", "index", "expected"),
+    ("content", "index", "marker", "expected"),
     [
-        ("first line\nsecond line\nthird line", 0, "first line"),  # start of first line
-        ("first line\nsecond line\nthird line", 5, "first line"),  # middle of first line
-        ("first line\nsecond line\nthird line", 10, "first line"),  # on first \n
-        ("first line\nsecond line\nthird line", 11, "second line"),  # start of second line
-        ("first line\nsecond line\nthird line", 15, "second line"),  # middle of second line
-        ("first line\nsecond line\nthird line", 22, "second line"),  # on second \n
-        ("first line\nsecond line\nthird line", 23, "third line"),  # start of third line
-        ("first line\nsecond line\nthird line", 30, "third line"),  # end of string
-        ("single line string", 5, "single line string"),  # single line, no newline
-        ("", 0, ""),  # empty string
+        ("first line\nsecond line\nthird line", 0, "first", True),  # start of first line
+        ("first line\nsecond line\nthird line", 5, "line", True),  # middle of first line
+        ("first line\nsecond line\nthird line", 10, "first", True),  # on first \n
+        ("first line\nsecond line\nthird line", 11, "second", True),  # start of second line
+        ("first line\nsecond line\nthird line", 15, "line", True),  # middle of second line
+        ("first line\nsecond line\nthird line", 22, "second", True),  # on second \n
+        ("first line\nsecond line\nthird line", 23, "third", True),  # start of third line
+        ("first line\nsecond line\nthird line", 30, "line", True),  # end of string
+        ("single line string", 5, "single", True),  # single line, no newline
+        ("", 0, "anything", False),  # empty string
+        ("first line\nsecond line\nthird line", 0, "second", False), # check doesn't match other lines
+        ("first line\nsecond line\nthird line", 15, "third", False),
     ],
 )
-def test_matched_line(content, index, expected):
-    assert _matched_line(content, index) == expected
+def test_line_contains(content, index, marker, expected):
+    assert _line_contains(content, index, marker) == expected
 
 
 @pytest.mark.parametrize(
