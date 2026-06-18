@@ -286,11 +286,13 @@ def extract_content(tool_name, tool_input):
     return ""
 
 
-def _matched_line(content, index):
-    """Return the line of `content` that contains the character at `index`."""
+def _line_contains(content, index, marker):
+    """Check if the line of `content` containing `index` also contains `marker`."""
     start = content.rfind("\n", 0, index) + 1
     end = content.find("\n", index)
-    return content[start:] if end == -1 else content[start:end]
+    if end == -1:
+        end = len(content)
+    return content.find(marker, start, end) != -1
 
 
 def scan_content(content, file_path):
@@ -316,7 +318,7 @@ def scan_content(content, file_path):
 
             # Explicit per-line allowlist: a `seal-allow-secret` marker on the
             # matched line suppresses THIS match (for known-fake test fixtures).
-            if ALLOWLIST_MARKER in _matched_line(content, match.start()):
+            if _line_contains(content, match.start(), ALLOWLIST_MARKER):
                 pass
             # Exclude check: a +-100 char window of context. This intentionally
             # crosses line boundaries so a label on the line above (sha256:\n<hex>)
