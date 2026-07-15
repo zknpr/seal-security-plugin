@@ -8,6 +8,8 @@ import secret_scanner
 from secret_scanner import (
     _matched_line,
     extract_content,
+    extract_patch_targets,
+    extract_scan_targets,
     is_env_file,
     main,
     scan_content,
@@ -70,6 +72,69 @@ def test_extract_content_reads_write_and_edit_payloads():
     assert extract_content("Write", {"content": "new file"}) == "new file"
     assert extract_content("Edit", {"new_string": "replacement"}) == "replacement"
     assert extract_content("Read", {"content": "ignored"}) == ""
+
+
+def test_extract_scan_targets_preserves_claude_payloads():
+    """Claude Write/Edit payloads retain their current content semantics."""
+    assert extract_scan_targets(
+        "Write", {"file_path": "/repo/new.py", "content": "new file"}
+    ) == [("/repo/new.py", "new file")]
+    assert extract_scan_targets(
+        "Edit", {"file_path": "/repo/app.py", "new_string": "replacement"}
+    ) == [("/repo/app.py", "replacement")]
+
+
+def test_extract_patch_targets_groups_added_lines_by_destination_file():
+    """Codex additions are grouped per path while removals and context are ignored."""
+    command = """*** Begin Patch
+*** Update File: src/app.py
+@@
+-private_key = "removed"
++print("safe")
+ unchanged
+*** Add File: config/new.txt
++first
++second
+*** End Patch"""
+
+    assert extract_patch_targets(command) == [
+        ("src/app.py", 'print("safe")'),
+        ("config/new.txt", "first\nsecond"),
+    ]
+
+
+def test_extract_patch_targets_applies_move_destination_to_whole_section():
+    """A move marker changes the path for additions buffered in that section."""
+    command = """*** Begin Patch
+*** Update File: old.txt
++moved content
+*** Move to: new.txt
+*** End Patch"""
+
+    assert extract_patch_targets(command) == [("new.txt", "moved content")]
+
+
+def test_extract_patch_targets_allows_deletion_only_patch():
+    """Removed secrets are not rescanned and therefore cannot block cleanup."""
+    command = """*** Begin Patch
+*** Delete File: leaked.txt
+-private_key = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # seal-allow-secret
+*** End Patch"""
+
+    assert extract_patch_targets(command) == []
+
+
+def test_extract_patch_targets_scans_orphan_additions_under_neutral_path():
+    """Unexpected added lines still receive content scanning without path access."""
+    assert extract_patch_targets("+api_key = secret") == [
+        ("<apply_patch>", "api_key = secret")
+    ]
+
+
+@pytest.mark.parametrize("command", [None, 123, ["+secret"], {"command": "+secret"}])
+def test_extract_patch_targets_handles_non_string_commands(command):
+    """Malformed Codex command values preserve the hook's never-crash contract."""
+    assert extract_patch_targets(command) == []
 
 
 @pytest.mark.parametrize(
@@ -312,6 +377,116 @@ def test_scan_content_allowlist_does_not_absorb_next_line_seed():
     content = "wallet1 = " + phrase + "  # seal-allow-secret\nwallet2 = " + phrase
     rule_name, _, _ = scan_content(content, "/repo/x.txt")
     assert rule_name == "mnemonic_phrase"
+
+
+def _codex_patch_payload(command, session_id="codex-test"):
+    """Build the exact Codex PreToolUse payload used for apply_patch calls."""
+    return json.dumps({
+        "session_id": session_id,
+        "tool_name": "apply_patch",
+        "tool_input": {"command": command},
+    })
+
+
+def test_main_codex_blocks_secret_added_by_patch():
+    """A secret introduced through Codex apply_patch blocks with status 2."""
+    private_key = "a" * 64
+    payload = _codex_patch_payload(
+        "*** Begin Patch\n"
+        "*** Add File: leaked.py\n"
+        f"+private_key = '0x{private_key}'\n"
+        "*** End Patch"
+    )
+
+    with patch("sys.stdin.read", return_value=payload), \
+         patch("sys.stderr.write") as mock_stderr, \
+         patch.object(secret_scanner, "load_shown") as mock_load, \
+         patch.object(secret_scanner, "save_shown") as mock_save:
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+    mock_stderr.assert_called()
+    mock_load.assert_not_called()
+    mock_save.assert_not_called()
+
+
+def test_main_codex_allows_patch_that_only_removes_secret():
+    """Removing an existing secret remains possible because deletions are not scanned."""
+    private_key = "a" * 64
+    payload = _codex_patch_payload(
+        "*** Begin Patch\n"
+        "*** Update File: leaked.py\n"
+        "@@\n"
+        f"-private_key = '0x{private_key}'\n"
+        "+private_key = os.environ['PRIVATE_KEY']\n"
+        "*** End Patch"
+    )
+
+    with patch("sys.stdin.read", return_value=payload):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+
+
+def test_main_codex_scans_every_patch_target():
+    """A clean first file cannot hide a secret added to a later patch target."""
+    private_key = "b" * 64
+    payload = _codex_patch_payload(
+        "*** Begin Patch\n"
+        "*** Update File: clean.py\n"
+        "+print('safe')\n"
+        "*** Add File: leaked.py\n"
+        f"+private_key = '0x{private_key}'\n"
+        "*** End Patch"
+    )
+
+    with patch("sys.stdin.read", return_value=payload), \
+         patch("sys.stderr.write"):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+
+
+def test_main_codex_warns_instead_of_blocking_env_patch():
+    """Secrets added to expected env files warn once and do not block the patch."""
+    private_key = "c" * 64
+    payload = _codex_patch_payload(
+        "*** Begin Patch\n"
+        "*** Update File: .env.local\n"
+        f"+PRIVATE_KEY=0x{private_key}\n"
+        "*** End Patch",
+        session_id="codex-env",
+    )
+
+    with patch("sys.stdin.read", return_value=payload), \
+         patch("sys.stderr.write"), \
+         patch.object(secret_scanner, "load_shown", return_value=set()), \
+         patch.object(secret_scanner, "save_shown") as mock_save:
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_save.assert_called_once()
+
+
+def test_main_codex_respects_per_line_allowlist_marker():
+    """The explicit marker suppresses a known-fake secret on its own added line."""
+    private_key = "d" * 64
+    payload = _codex_patch_payload(
+        "*** Begin Patch\n"
+        "*** Add File: fixture.py\n"
+        f"+private_key = '0x{private_key}'  # seal-allow-secret\n"
+        "*** End Patch"
+    )
+
+    with patch("sys.stdin.read", return_value=payload):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
 
 
 def test_main_clean_content_exits_success():

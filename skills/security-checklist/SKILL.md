@@ -5,7 +5,7 @@ description: Quick operational security checklists for specific platforms and se
 
 # Security Checklists (SEAL Framework)
 
-Provide the specific checklist for the platform or service the user asks about. Read `~/.claude/seal-security-framework.md` for the full framework, but deliver focused, actionable checklists.
+Provide the specific checklist for the platform or service the user asks about. For deeper cross-cutting guidance, read the relevant bundled files under `../security-guidance/references/`, but deliver a focused, actionable checklist.
 
 ## Platform Checklists
 

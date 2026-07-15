@@ -87,10 +87,26 @@ def read_hook_input(log_file):
     return data
 
 
+def get_plugin_data_dir():
+    """Return the current host's writable plugin-data directory.
+
+    Codex provides ``PLUGIN_DATA`` and compatibility variables. The native
+    Codex variable takes precedence so Codex state never leaks into
+    ``~/.claude``. Older Claude installations that provide neither variable
+    retain the historical ``~/.claude`` location.
+    """
+    for variable in ("PLUGIN_DATA", "CLAUDE_PLUGIN_DATA"):
+        value = os.environ.get(variable)
+        if value:
+            return os.path.abspath(os.path.expanduser(value))
+    return os.path.expanduser("~/.claude")
+
+
 def get_state_file(session_id, prefix):
-    """Build a per-session state file path under ~/.claude with a safe name."""
+    """Build a sanitized per-session state path in the host's data directory."""
     safe = _SAFE_SESSION_ID_RE.sub("_", str(session_id))
-    return os.path.expanduser(f"~/.claude/.{prefix}_{safe}.json")
+    filename = f".{prefix}_{safe}.json"
+    return os.path.join(get_plugin_data_dir(), filename)
 
 
 def load_shown(session_id, prefix):
@@ -110,7 +126,8 @@ def save_shown(session_id, prefix, shown, log_file=None):
     path = get_state_file(session_id, prefix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Owner-only (0o600) + UTF-8 under ~/.claude; least-privilege by default.
+        # Owner-only (0o600) + UTF-8 in the host's plugin-data directory keeps
+        # warning state private regardless of which client launched the hook.
         # "w" truncates to replace the full set; _owner_only_opener re-tightens a
         # pre-existing (e.g. 0o644) state file too.
         with open(path, "w", encoding="utf-8", opener=_owner_only_opener) as f:

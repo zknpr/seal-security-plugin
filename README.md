@@ -1,12 +1,25 @@
-# SEAL Security Plugin for Claude Code
+# SEAL Security Plugin
 
-Comprehensive Web3 security framework plugin based on the [SEAL (Security Alliance) Frameworks](https://frameworks.securityalliance.org). Provides real-time security guidance, platform-specific hardening checklists, and hooks that block dangerous commands and secret exposure.
+Comprehensive Web3 security framework plugin for Claude Code and Codex CLI, based on the [SEAL (Security Alliance) Frameworks](https://frameworks.securityalliance.org). It provides real-time security guidance, platform-specific hardening checklists, and local hooks that block dangerous commands and secret exposure.
 
 ## Install
+
+### Claude Code
 
 ```bash
 claude plugin install seal-security@github:zknpr/seal-security-plugin
 ```
+
+### Codex CLI
+
+Add this repository as a marketplace, then install the plugin from that marketplace:
+
+```bash
+codex plugin marketplace add zknpr/seal-security-plugin
+codex plugin add seal-security@seal-security
+```
+
+Start a new Codex conversation after installation. Run `/hooks` to review and trust the plugin hooks; Codex does not execute newly installed hook commands until the user has approved them.
 
 ## What's Included
 
@@ -19,10 +32,10 @@ claude plugin install seal-security@github:zknpr/seal-security-plugin
 
 ### Hooks
 
-| Hook | Trigger | Behavior |
-|---|---|---|
-| `security-guard` | Every `Bash` command | 15 rules catching pipe-to-shell, chmod 777, force push, secret exposure, docker privileged, SSL disable, etc. |
-| `secret-scanner` | Every `Write`/`Edit` operation | 11 patterns detecting private keys, mnemonics, AWS creds, SSH keys, JWTs, webhook URLs, DB connection strings |
+| Hook | Claude Code trigger | Codex CLI trigger | Behavior |
+|---|---|---|---|
+| `security-guard` | Every `Bash` command | Every `Bash` command | 16 rules catching pipe-to-shell, chmod 777, force push, secret exposure, Docker privileged mode, SSL disable, and related hazards |
+| `secret-scanner` | Every `Write`/`Edit` operation | Added lines in every `apply_patch` target | 11 patterns detecting private keys, mnemonics, AWS credentials, SSH keys, JWTs, webhook URLs, and database connection strings |
 
 #### Hook Behavior
 
@@ -31,7 +44,12 @@ claude plugin install seal-security@github:zknpr/seal-security-plugin
 - `.env` files are warned but never blocked (they're expected to contain secrets)
 - Each **warning** is shown only once per session per file/command (no nagging); **blocked** actions are always enforced, on every occurrence
 - Add a `seal-allow-secret` comment on a line to opt that line out of secret scanning (for known-fake values in test fixtures)
-- Debug logging is **opt-in**: set `SEAL_DEBUG=1` to write hook logs under `~/.claude/` (off by default)
+- Codex patches scan only newly added lines, grouped by destination file. Removed lines and unchanged context are ignored so deleting an existing secret is never blocked.
+- Debug logging is **opt-in**: set `SEAL_DEBUG=1` to write metadata-only logs in the active client's plugin data directory (off by default; secret values are never logged)
+
+#### Coverage Boundary
+
+The hooks are defense in depth, not a replacement for repository secret scanning, protected branches, least-privilege credentials, or CI policy. Codex `PreToolUse` hooks cover canonical `Bash` and `apply_patch` calls, but they do not intercept every possible file mutation performed inside an arbitrary shell command or external tool. Keep a dedicated scanner such as gitleaks or detect-secrets in pre-commit and CI for complete repository coverage.
 
 ## Covered Security Domains
 

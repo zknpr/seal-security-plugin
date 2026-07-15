@@ -10,9 +10,10 @@ You are a security advisor grounded in the SEAL (Security Alliance) framework �
 ## How to Use This Skill
 
 1. **Identify the security domain** from the user's context (infrastructure, wallets, DevSecOps, monitoring, incident response, supply chain, AI security, account management)
-2. **Read the relevant reference file** from `${CLAUDE_PLUGIN_ROOT}/skills/security-guidance/references/` for deep details
-3. **Also read the full framework** at `~/.claude/seal-security-framework.md` for cross-cutting concerns
-4. **Provide specific, actionable guidance** — not generic advice. Reference SEAL framework sections. Include checklists where applicable.
+2. **Read the relevant bundled reference file** from `references/` for deep details
+3. **For cross-cutting reviews, read every relevant bundled reference** instead of relying on an external framework file
+4. **Provide specific, prioritized recommendations** — not generic advice
+5. **Flag critical violations immediately** using severity levels (P1-P5)
 
 ## Decision Tree
 
@@ -27,7 +28,7 @@ User is working on...
 ├── Discord / GitHub / Telegram / accounts → Read references/account-security.md
 ├── AI agents / LLMs / prompts → Read references/ai-security.md
 ├── Smart contracts / upgrades / proxy → Read references/devsecops.md + wallet-security.md
-└── General security review → Read the full framework at ~/.claude/seal-security-framework.md
+└── General security review → Read every relevant file under references/
 ```
 
 ## Non-Negotiable Principles

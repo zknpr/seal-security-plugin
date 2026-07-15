@@ -18,12 +18,18 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import (
+    debug_log,
+    get_plugin_data_dir,
+    load_shown,
+    read_hook_input,
+    save_shown,
+)
 
-# Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
-# rather than a predictable /tmp path, which in a world-writable directory is a
-# symlink/info-disclosure risk (CWE-377).
-DEBUG_LOG = os.path.expanduser("~/.claude/seal-security-guard.log")
+# Debug logging is opt-in via SEAL_DEBUG. The host-supplied plugin-data
+# directory avoids a predictable world-writable /tmp path and keeps Codex data
+# separate from Claude data; debug_log enforces owner-only file permissions.
+DEBUG_LOG = os.path.join(get_plugin_data_dir(), "seal-security-guard.log")
 STATE_PREFIX = "seal_guard_state"
 
 # State file tracks which warnings have been shown per session
