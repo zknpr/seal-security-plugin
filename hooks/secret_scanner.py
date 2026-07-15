@@ -25,12 +25,18 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import debug_log, load_shown, read_hook_input, save_shown
+from utils import (
+    debug_log,
+    get_plugin_data_dir,
+    load_shown,
+    read_hook_input,
+    save_shown,
+)
 
-# Debug log (opt-in via SEAL_DEBUG). Kept under the user-owned ~/.claude dir
-# rather than a predictable /tmp path, which in a world-writable directory is a
-# symlink/info-disclosure risk (CWE-377).
-DEBUG_LOG = os.path.expanduser("~/.claude/seal-secret-scanner.log")
+# Debug logging is opt-in via SEAL_DEBUG. The host-supplied plugin-data
+# directory avoids a predictable world-writable /tmp path and keeps Codex data
+# separate from Claude data; debug_log enforces owner-only file permissions.
+DEBUG_LOG = os.path.join(get_plugin_data_dir(), "seal-secret-scanner.log")
 STATE_PREFIX = "seal_scanner_state"
 
 # Explicit per-line opt-out: a line carrying this marker (e.g. a known-fake
@@ -286,6 +292,96 @@ def extract_content(tool_name, tool_input):
     return ""
 
 
+_PATCH_FILE_MARKER = re.compile(
+    r"^\*\*\* (Add|Update|Delete) File:\s*(.*)$"
+)
+_PATCH_MOVE_MARKER = re.compile(r"^\*\*\* Move to:\s*(.*)$")
+_NEUTRAL_PATCH_PATH = "<apply_patch>"
+
+
+def _merge_patch_lines(grouped_lines, file_path, added_lines):
+    """Merge one buffered file section into ordered per-destination content."""
+    if not added_lines:
+        return
+    destination = file_path or _NEUTRAL_PATCH_PATH
+    grouped_lines.setdefault(destination, []).extend(added_lines)
+
+
+def extract_patch_targets(command):
+    """Extract only newly added content from a Codex apply_patch command.
+
+    File sections remain buffered until the next section or patch end so a
+    later ``Move to`` marker can select the destination for every addition in
+    the section. Unrecognized additions use a neutral path and are still
+    scanned without opening or resolving the user-provided target path.
+    """
+    if not isinstance(command, str) or not command:
+        return []
+
+    # Regular dictionaries preserve insertion order on every supported Python
+    # version, so targets are returned in patch order while repeated sections
+    # for the same destination are combined into one scan unit.
+    grouped_lines = {}
+    current_path = None
+    added_lines = []
+
+    for line in command.splitlines():
+        file_marker = _PATCH_FILE_MARKER.match(line)
+        if file_marker:
+            _merge_patch_lines(grouped_lines, current_path, added_lines)
+            operation, raw_path = file_marker.groups()
+            # Delete sections intentionally have no destination: removed lines
+            # must never block cleanup. Any anomalous '+' line in such a
+            # section is still collected under the neutral fail-safe target.
+            current_path = raw_path.strip() if operation != "Delete" else None
+            added_lines = []
+            continue
+
+        move_marker = _PATCH_MOVE_MARKER.match(line)
+        if move_marker:
+            destination = move_marker.group(1).strip()
+            if destination:
+                current_path = destination
+            continue
+
+        if line == "*** End Patch":
+            _merge_patch_lines(grouped_lines, current_path, added_lines)
+            current_path = None
+            added_lines = []
+            continue
+
+        if line.startswith("+"):
+            # Exactly one patch prefix is structural. A source line that itself
+            # begins with '+' therefore retains its remaining leading pluses.
+            added_lines.append(line[1:])
+
+    _merge_patch_lines(grouped_lines, current_path, added_lines)
+    return [
+        (file_path, "\n".join(lines))
+        for file_path, lines in grouped_lines.items()
+    ]
+
+
+def extract_scan_targets(tool_name, tool_input):
+    """Normalize Claude and Codex edit payloads into scan-target tuples."""
+    if not isinstance(tool_input, dict):
+        return []
+
+    if tool_name in ("Write", "Edit"):
+        file_path = tool_input.get("file_path", "")
+        content = extract_content(tool_name, tool_input)
+        if not isinstance(file_path, str):
+            file_path = ""
+        if not isinstance(content, str) or not content:
+            return []
+        return [(file_path, content)]
+
+    if tool_name == "apply_patch":
+        return extract_patch_targets(tool_input.get("command"))
+
+    return []
+
+
 def _matched_line(content, index):
     """Return the line of `content` that contains the character at `index`."""
     start = content.rfind("\n", 0, index) + 1
@@ -355,36 +451,45 @@ def main():
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})  # read_hook_input guarantees a dict
 
-    if tool_name not in ("Write", "Edit"):
+    # Claude supplies one Write/Edit target, while Codex apply_patch can carry
+    # additions for several files. Normalizing both shapes here keeps the
+    # enforcement loop client-neutral and ensures every patch target is scanned.
+    targets = extract_scan_targets(tool_name, tool_input)
+    if not targets:
         sys.exit(0)
 
-    file_path = tool_input.get("file_path", "")
-    content = extract_content(tool_name, tool_input)
+    # Warning state is loaded only if a non-blocking finding exists. Blocking
+    # findings never depend on or mutate dedup state, so repeated writes remain
+    # blocked and clean edits avoid unnecessary state-file access.
+    shown = None
+    for file_path, content in targets:
+        debug_log(
+            f"Scanning {tool_name} on {file_path} ({len(content)} chars)",
+            DEBUG_LOG,
+        )
 
-    if not content:
-        sys.exit(0)
+        rule_name, message, should_block = scan_content(content, file_path)
+        if not rule_name:
+            continue
 
-    debug_log(f"Scanning {tool_name} on {file_path} ({len(content)} chars)", DEBUG_LOG)
-
-    rule_name, message, should_block = scan_content(content, file_path)
-
-    if rule_name:
-        # For .env files: always warn but never block (they're supposed to have secrets)
+        # Expected secret containers such as .env files remain writable. Their
+        # findings are downgraded to a once-per-session note for both clients.
         if is_env_file(file_path):
             message = message.replace("BLOCKED", "NOTE (env file)")
             should_block = False
 
-        # A blocking secret must be blocked on EVERY write. Enforcement must never
-        # sit behind the once-per-session dedup, or a later same-rule write to the
-        # same file (the dedup key is rule:file_path) would slip through.
+        # Exit status 2 is the hook protocol's blocking signal. It must be
+        # returned for every blocking occurrence, independent of warning dedup.
         if should_block:
             print(message, file=sys.stderr)
             debug_log(f"BLOCKED: {rule_name} in {file_path}", DEBUG_LOG)
             sys.exit(2)
 
-        # Warning (incl. the .env note): show once per session, then allow.
+        # Non-blocking findings, including env-file notes, are keyed by both
+        # rule and destination so independent files receive independent notices.
+        if shown is None:
+            shown = load_shown(session_id, STATE_PREFIX)
         warning_key = f"{rule_name}:{file_path}"
-        shown = load_shown(session_id, STATE_PREFIX)
         if warning_key not in shown:
             shown.add(warning_key)
             save_shown(session_id, STATE_PREFIX, shown, DEBUG_LOG)

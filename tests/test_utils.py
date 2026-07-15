@@ -6,7 +6,14 @@ from unittest.mock import patch
 import pytest
 
 import utils
-from utils import debug_log, get_state_file, load_shown, read_hook_input, save_shown
+from utils import (
+    debug_log,
+    get_plugin_data_dir,
+    get_state_file,
+    load_shown,
+    read_hook_input,
+    save_shown,
+)
 
 
 @pytest.fixture
@@ -19,6 +26,48 @@ def mock_expanduser(tmp_path, monkeypatch):
         lambda path: str(tmp_path / path.removeprefix("~/")),
     )
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def clear_plugin_data_environment(monkeypatch):
+    """Keep host plugin-data variables from leaking into path-unit tests."""
+    monkeypatch.delenv("PLUGIN_DATA", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
+
+
+def test_plugin_data_dir_prefers_codex_directory(tmp_path, monkeypatch):
+    """Codex's writable data directory has precedence when both hosts are set."""
+    codex_dir = tmp_path / "codex-data"
+    claude_dir = tmp_path / "claude-data"
+    monkeypatch.setenv("PLUGIN_DATA", str(codex_dir))
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(claude_dir))
+
+    assert get_plugin_data_dir() == str(codex_dir)
+
+
+def test_plugin_data_dir_uses_claude_directory_when_codex_is_absent(
+    tmp_path, monkeypatch
+):
+    """Claude's writable plugin directory is the second supported host path."""
+    claude_dir = tmp_path / "claude-data"
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(claude_dir))
+
+    assert get_plugin_data_dir() == str(claude_dir)
+
+
+def test_plugin_data_dir_falls_back_to_claude_home(mock_expanduser):
+    """Older Claude installations retain the established home-directory path."""
+    assert get_plugin_data_dir() == os.path.expanduser("~/.claude")
+
+
+def test_state_file_uses_selected_plugin_data_directory(tmp_path, monkeypatch):
+    """Warning state follows the host-selected writable data directory."""
+    data_dir = tmp_path / "plugin-data"
+    monkeypatch.setenv("PLUGIN_DATA", str(data_dir))
+
+    assert get_state_file("abc/123", "seal") == str(
+        data_dir / ".seal_abc_123.json"
+    )
 
 
 def test_get_state_file_sanitizes_session_id_path_traversal():

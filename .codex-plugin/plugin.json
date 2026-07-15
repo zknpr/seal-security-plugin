@@ -1,0 +1,36 @@
+{
+  "name": "seal-security",
+  "version": "1.1.0",
+  "description": "SEAL-aligned Web3 security guidance with command guardrails and secret scanning.",
+  "author": {
+    "name": "zero",
+    "url": "https://github.com/zknpr"
+  },
+  "homepage": "https://github.com/zknpr/seal-security-plugin#readme",
+  "repository": "https://github.com/zknpr/seal-security-plugin",
+  "license": "MIT",
+  "keywords": [
+    "web3",
+    "security",
+    "devsecops",
+    "secret-scanning",
+    "guardrails"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "SEAL Security",
+    "shortDescription": "Web3 security guidance and local guardrails",
+    "longDescription": "SEAL-aligned skills and lifecycle hooks that guide security work, flag dangerous commands, and scan added file content for secrets.",
+    "developerName": "zero",
+    "category": "Security",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Review this project using the SEAL security framework.",
+      "Give me a hardening checklist for this service.",
+      "Check this change for dangerous commands and secrets."
+    ]
+  }
+}
